@@ -53,8 +53,8 @@ export function ResultsView({
     <div className="space-y-4">
       {results.length > 0 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            {results.length} result{results.length !== 1 ? "s" : ""} found
+          <p className="text-xl font-semibold text-foreground">
+            {results.length.toLocaleString()} result{results.length !== 1 ? "s" : ""} found
           </p>
           <div className="flex items-center gap-2">
             <Button

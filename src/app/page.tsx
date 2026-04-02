@@ -65,9 +65,9 @@ export default function Home() {
           </p>
           <Link
             href="/line-trimmer"
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mt-2"
+            className="inline-flex items-center gap-1.5 mt-3 rounded-md border border-input bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
           >
-            <Scissors className="h-3.5 w-3.5" />
+            <Scissors className="h-4 w-4" />
             Line Trimmer Tool
           </Link>
         </div>

@@ -153,7 +153,17 @@ export function LineTrimmer() {
 
   const handleExportCsv = useCallback(() => {
     if (!csvData) return;
-    const csvString = csvData.map((row) => row.join(";")).join("\n");
+    const csvString = csvData
+      .map((row) =>
+        row
+          .map((val) =>
+            val.includes(",") || val.includes('"')
+              ? `"${val.replace(/"/g, '""')}"`
+              : val
+          )
+          .join(",")
+      )
+      .join("\n");
     downloadFile(
       csvString,
       `${polyFileName.replace(".kml", "")}_trimmed.csv`,
