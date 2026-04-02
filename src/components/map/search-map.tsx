@@ -360,7 +360,7 @@ export function SearchMap({
       {/* Filter bar — only when results exist */}
       {results.length > 0 && (
         <div className="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3">
-          <div className="space-y-1">
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs text-muted-foreground">Resolution</label>
             <select
               value={resolution}
@@ -375,8 +375,8 @@ export function SearchMap({
               ))}
             </select>
           </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Date from</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-muted-foreground">Start date</label>
             <Input
               type="date"
               value={dateFrom}
@@ -384,8 +384,8 @@ export function SearchMap({
               className="w-[150px]"
             />
           </div>
-          <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">Date to</label>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-muted-foreground">End date</label>
             <Input
               type="date"
               value={dateTo}
@@ -424,7 +424,7 @@ export function SearchMap({
         <div ref={popupRef} className="ol-popup" />
 
         {/* Map overlay controls — top left */}
-        <div className="absolute top-3 left-3 z-10 flex flex-col gap-2">
+        <div className="absolute top-3 left-12 z-10 flex flex-col gap-2">
           {/* Location search */}
           <form onSubmit={handleLocationSearch} className="relative">
             <div className="flex gap-1">

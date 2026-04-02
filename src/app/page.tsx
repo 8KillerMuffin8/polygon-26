@@ -7,7 +7,9 @@ import { CoordinateInput } from "@/components/search/coordinate-input";
 import { ResultsView } from "@/components/results/results-view";
 import { searchByCoordinates } from "@/actions/search-by-coordinates";
 import { toast } from "sonner";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, Scissors } from "lucide-react";
+import Link from "next/link";
+import { ThemeToggle } from "@/components/theme-toggle";
 import type { Coordinate, ImageRecord } from "@/types";
 
 export default function Home() {
@@ -50,7 +52,10 @@ export default function Home() {
   };
 
   return (
-    <main className="flex-1 flex items-start justify-center p-6 pt-12">
+    <main className="flex-1 flex items-start justify-center p-6 pt-12 relative">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-5xl space-y-6">
         <div className="text-center space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Polygon Search</h1>
@@ -58,6 +63,13 @@ export default function Home() {
             Draw a polygon on the map or enter coordinates to search aerial
             imagery
           </p>
+          <Link
+            href="/line-trimmer"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mt-2"
+          >
+            <Scissors className="h-3.5 w-3.5" />
+            Line Trimmer Tool
+          </Link>
         </div>
 
         <ResultsView
