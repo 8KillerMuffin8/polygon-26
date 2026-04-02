@@ -11,9 +11,10 @@ import type { Coordinate } from "@/types";
 interface CoordinateInputProps {
   coordinates: Coordinate[];
   onChange: (coords: Coordinate[]) => void;
+  onKmlFileChange?: (fileName: string | null) => void;
 }
 
-export function CoordinateInput({ coordinates, onChange }: CoordinateInputProps) {
+export function CoordinateInput({ coordinates, onChange, onKmlFileChange }: CoordinateInputProps) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [kmlOpen, setKmlOpen] = useState(false);
 
@@ -73,7 +74,10 @@ export function CoordinateInput({ coordinates, onChange }: CoordinateInputProps)
       <KmlUploadDialog
         open={kmlOpen}
         onOpenChange={setKmlOpen}
-        onApply={onChange}
+        onApply={(coords, fileName) => {
+          onChange(coords);
+          onKmlFileChange?.(fileName ?? null);
+        }}
       />
     </div>
   );

@@ -8,6 +8,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import type { Coordinate } from "@/types";
 
@@ -19,7 +29,7 @@ interface KmlPolygon {
 interface KmlUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApply: (coords: Coordinate[]) => void;
+  onApply: (coords: Coordinate[], fileName?: string) => void;
 }
 
 function parseKmlCoordinates(text: string): Coordinate[] {
@@ -31,6 +41,13 @@ function parseKmlCoordinates(text: string): Coordinate[] {
       const [lng, lat] = entry.split(",").map(Number);
       return { latitude: lat, longitude: lng };
     });
+}
+
+function isPolygonClosed(coords: Coordinate[]): boolean {
+  if (coords.length < 2) return false;
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  return first.latitude === last.latitude && first.longitude === last.longitude;
 }
 
 function parseKml(xmlText: string): KmlPolygon[] {
@@ -72,19 +89,34 @@ export function KmlUploadDialog({
   const [polygons, setPolygons] = useState<KmlPolygon[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [unclosedCoords, setUnclosedCoords] = useState<Coordinate[] | null>(null);
+  const fileNameRef = useRef("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
     setPolygons([]);
     setSelected(null);
     setError("");
+    setUnclosedCoords(null);
+    fileNameRef.current = "";
     if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const applyCoords = (coords: Coordinate[]) => {
+    if (!isPolygonClosed(coords)) {
+      setUnclosedCoords(coords);
+      return;
+    }
+    onApply(coords, fileNameRef.current);
+    onOpenChange(false);
+    reset();
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    fileNameRef.current = file.name;
     setError("");
     const reader = new FileReader();
     reader.onload = () => {
@@ -95,9 +127,7 @@ export function KmlUploadDialog({
           return;
         }
         if (parsed.length === 1) {
-          onApply(parsed[0].coordinates);
-          onOpenChange(false);
-          reset();
+          applyCoords(parsed[0].coordinates);
           return;
         }
         setPolygons(parsed);
@@ -111,9 +141,7 @@ export function KmlUploadDialog({
 
   const handleApply = () => {
     if (selected !== null && polygons[selected]) {
-      onApply(polygons[selected].coordinates);
-      onOpenChange(false);
-      reset();
+      applyCoords(polygons[selected].coordinates);
     }
   };
 
@@ -176,6 +204,51 @@ export function KmlUploadDialog({
           )}
         </DialogFooter>
       </DialogContent>
+
+      <AlertDialog
+        open={unclosedCoords !== null}
+        onOpenChange={(open) => {
+          if (!open) setUnclosedCoords(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Polygon is not closed</AlertDialogTitle>
+            <AlertDialogDescription>
+              The first and last coordinates of this polygon are different. A
+              closed polygon requires the first and last points to be identical.
+              Would you like to automatically close it by adding the first
+              coordinate as the last point?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="outline"
+              onClick={() => {
+                if (unclosedCoords) {
+                  onApply(unclosedCoords, fileNameRef.current);
+                  onOpenChange(false);
+                  reset();
+                }
+              }}
+            >
+              Import as-is
+            </AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => {
+                if (unclosedCoords) {
+                  onApply([...unclosedCoords, unclosedCoords[0]], fileNameRef.current);
+                  onOpenChange(false);
+                  reset();
+                }
+              }}
+            >
+              Close polygon automatically
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

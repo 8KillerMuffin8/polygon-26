@@ -41,7 +41,7 @@ export function ExportDialog({
   filename,
 }: ExportDialogProps) {
   const [selected, setSelected] = useState<Set<string>>(
-    new Set(["SourceFile", "GPSLatitude", "GPSLongitude", "Datetimeoriginal", "target"])
+    new Set(["SourceFile", "GPSLatitude", "GPSLongitude", "Datetimeoriginal", "target", "resolution"])
   );
 
   const toggle = (key: string) => {

@@ -128,3 +128,11 @@
     @apply font-sans;
   }
 }
+
+.dark .ol-map {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.dark .ol-map .ol-popup {
+  filter: invert(1) hue-rotate(180deg);
+}
