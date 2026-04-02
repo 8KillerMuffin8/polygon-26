@@ -1,0 +1,112 @@
+{
+    "env": {
+      "CLAUDE_CODE_USE_BEDROCK": "1",
+      "ANTHROPIC_MODEL": "opus",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL": "global.anthropic.claude-opus-4-6-v1",
+      "DISABLE_PROMPT_CACHING": "0"
+    },
+    "permissions": {
+      "allow": [
+        "Bash(aws cloudwatch:*)",
+        "Bash(aws bedrock:*)",
+        "Bash(*/.claude/check-claude-code-costs.sh:*)",
+        "mcp__ide__getDiagnostics",
+        "Bash(ls:*)",
+        "Bash(pnpm run lint:*)",
+        "Bash(pnpm run format:*)",
+        "Bash(pnpm run dev)",
+        "Bash(pnpm install:*)",
+        "Bash(npx eslint:*)",
+        "Bash(npx tsc:*)",
+        "Bash(npx prettier:*)",
+        "Bash(git:*)",
+        "Bash(gh:*)",
+        "Bash(docker:*)",
+        "Bash(curl:*)",
+        "Bash(python3:*)",
+        "Bash(source:*)",
+        "Bash(xargs:*)",
+        "WebSearch",
+        "WebFetch(domain:developer.nylas.com)",
+        "WebFetch(domain:support.nylas.com)",
+        "WebFetch(domain:www.businessinitiative.org)",
+        "WebFetch(domain:www.greatschools.org)",
+        "WebFetch(domain:documenter.getpostman.com)",
+        "WebFetch(domain:gs-api.greatschools.org)",
+        "WebFetch(domain:greatschools.zendesk.com)",
+        "WebFetch(domain:www.walkscore.com)",
+        "WebFetch(domain:firststreet.org)",
+        "WebFetch(domain:docs.firststreet.org)",
+        "WebFetch(domain:www.fema.gov)",
+        "WebFetch(domain:hazards.fema.gov)",
+        "WebFetch(domain:help.addresscloud.com)",
+        "WebFetch(domain:hazards.geoplatform.gov)",
+        "WebFetch(domain:resilience.climate.gov)",
+        "WebFetch(domain:www.arcgis.com)",
+        "WebFetch(domain:www.esri.com)",
+        "WebFetch(domain:resilience-fema.hub.arcgis.com)",
+        "WebFetch(domain:www.bls.gov)",
+        "WebFetch(domain:data.bls.gov)",
+        "WebFetch(domain:apps.bea.gov)",
+        "WebFetch(domain:api.census.gov)",
+        "mcp__github__search_repositories",
+        "mcp__github__create_pull_request",
+        "mcp__github__issue_read",
+        "mcp__github__list_issues",
+        "mcp__github__list_pull_requests",
+        "mcp__github__pull_request_read",
+        "mcp__github__search_code",
+        "mcp__github__get_file_contents",
+        "mcp__polotno-docs__polotno_documentation",
+        "Bash(pnpm run build)",
+        "Bash(pnpm exec tsc --noEmit --pretty)",
+        "Bash(pnpm exec prettier:*)",
+        "Bash(export PATH:*)",
+        "Bash(npx tsc --noEmit:*)",
+        "Bash(./node_modules/.bin/tsc:*)",
+        "Bash(node:*)",
+        "Bash(pnpm add:*)",
+        "Bash(find:*)",
+        "Bash(sed:*)",
+        "Bash(wc:*)",
+        "Bash(grep:*)",
+        "Bash(tail:*)",
+        "Bash(head:*)",
+        "Bash(cat:*)",
+        "Bash(export NVM_DIR:*)",
+        "Bash(. *nvm.sh:*)",
+        "Read(//tmp/**)",
+        "Bash(/tmp/*:*)"
+      ],
+      "additionalDirectories": ["/tmp"]
+    },
+    "enableAllProjectMcpServers": true,
+    "enabledMcpjsonServers": ["github"],
+    "hooks": {
+      "PostToolUse": [
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "source ~/.zshrc 2>/dev/null; jq -r '.tool_input.file_path' | xargs npx prettier --write 2>/dev/null || true"
+            }
+          ]
+        }
+      ],
+      "PreToolUse": [
+        {
+          "matcher": "Edit|Write",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "jq -r '.tool_input.file_path // empty' | grep -qE '(pnpm-lock\\.yaml|package-lock\\.json)' && echo '{\"decision\": \"block\", \"reason\": \"Do not modify lockfiles directly. Make changes in package.json and run pnpm install.\"}' || echo '{\"decision\": \"approve\"}'"
+            }
+          ]
+        }
+      ]
+    }
+  }
+  
