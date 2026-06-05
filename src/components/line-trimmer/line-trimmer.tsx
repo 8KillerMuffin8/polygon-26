@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { processLines } from "@/lib/geo/line-trimmer";
+import { processLines, parseAltitudeFile } from "@/lib/geo/line-trimmer";
 import { toast } from "sonner";
 import {
   Upload,
@@ -59,12 +59,16 @@ export function LineTrimmer() {
   const [keepExternal, setKeepExternal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  const [altitudes, setAltitudes] = useState<number[] | null>(null);
+  const [altFileName, setAltFileName] = useState("");
+
   const [originalLines, setOriginalLines] = useState<Feature<LineString>[]>([]);
   const [trimmedLines, setTrimmedLines] = useState<Feature<LineString>[]>([]);
   const [csvData, setCsvData] = useState<string[][] | null>(null);
 
   const polyInputRef = useRef<HTMLInputElement>(null);
   const linesInputRef = useRef<HTMLInputElement>(null);
+  const altInputRef = useRef<HTMLInputElement>(null);
 
   const handlePolyUpload = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -127,6 +131,27 @@ export function LineTrimmer() {
     []
   );
 
+  const handleAltUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setAltFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const json = JSON.parse(reader.result as string);
+          const alts = parseAltitudeFile(json);
+          setAltitudes(alts);
+          toast.success(`Loaded ${alts.length} altitudes from ${file.name}`);
+        } catch {
+          toast.error("Failed to parse altitude file");
+        }
+      };
+      reader.readAsText(file);
+    },
+    []
+  );
+
   const handleProcess = useCallback(() => {
     if (!polyGeoJson || !linesGeoJson) return;
 
@@ -135,7 +160,7 @@ export function LineTrimmer() {
     // Use setTimeout to allow the UI to update before heavy computation
     setTimeout(() => {
       try {
-        const result = processLines(polyGeoJson, linesGeoJson, keepExternal);
+        const result = processLines(polyGeoJson, linesGeoJson, keepExternal, altitudes ?? undefined);
         setTrimmedLines(result.trimmedFeatures);
         setCsvData(result.csvData);
         toast.success(
@@ -149,7 +174,7 @@ export function LineTrimmer() {
         setIsProcessing(false);
       }
     }, 50);
-  }, [polyGeoJson, linesGeoJson, keepExternal]);
+  }, [polyGeoJson, linesGeoJson, keepExternal, altitudes]);
 
   const handleExportCsv = useCallback(() => {
     if (!csvData) return;
@@ -190,11 +215,14 @@ export function LineTrimmer() {
     setLinesGeoJson(null);
     setPolyFileName("");
     setLinesFileName("");
+    setAltitudes(null);
+    setAltFileName("");
     setOriginalLines([]);
     setTrimmedLines([]);
     setCsvData(null);
     if (polyInputRef.current) polyInputRef.current.value = "";
     if (linesInputRef.current) linesInputRef.current.value = "";
+    if (altInputRef.current) altInputRef.current.value = "";
   }, []);
 
   const canProcess = polyGeoJson !== null && linesGeoJson !== null;
@@ -203,7 +231,7 @@ export function LineTrimmer() {
   return (
     <div className="space-y-6">
       {/* Upload & Controls */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Polygon upload */}
         <Card>
           <CardHeader>
@@ -258,6 +286,33 @@ export function LineTrimmer() {
           </CardContent>
         </Card>
 
+        {/* Altitude file (optional) */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Upload className="h-4 w-4" />
+              Altitude File
+            </CardTitle>
+            <CardDescription>
+              Optional .jsn file with per-leg altitudes
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <input
+              ref={altInputRef}
+              type="file"
+              accept=".jsn,.json"
+              onChange={handleAltUpload}
+              className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 file:cursor-pointer"
+            />
+            {altFileName && (
+              <p className="mt-2 text-xs text-muted-foreground truncate">
+                {altFileName} — {altitudes?.length ?? 0} legs
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Options & Actions */}
         <Card>
           <CardHeader>
@@ -296,8 +351,9 @@ export function LineTrimmer() {
                   </>
                 )}
               </Button>
-              <Button variant="outline" size="icon" onClick={handleReset}>
+              <Button variant="outline" onClick={handleReset}>
                 <RotateCcw className="h-4 w-4" />
+                Clear
               </Button>
             </div>
           </CardContent>

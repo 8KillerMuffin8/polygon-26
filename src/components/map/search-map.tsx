@@ -34,6 +34,8 @@ import {
   MapPin,
   Trash2,
 } from "lucide-react";
+import { MeasureTool } from "@/components/map/measure-tool";
+import { PolygonArea } from "@/components/map/polygon-area";
 import type { Coordinate } from "@/types";
 import type { ImageRecord } from "@/types";
 import "ol/ol.css";
@@ -42,18 +44,22 @@ interface SearchMapProps {
   coordinates: Coordinate[];
   results: ImageRecord[];
   onCoordinatesChange: (coords: Coordinate[]) => void;
+  onClear?: () => void;
 }
 
 export function SearchMap({
   coordinates,
   results,
   onCoordinatesChange,
+  onClear,
 }: SearchMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<Map | null>(null);
+  const [mapReady, setMapReady] = useState<Map | null>(null);
   const pointsSourceRef = useRef<VectorSource | null>(null);
   const polygonSourceRef = useRef<VectorSource | null>(null);
+  const [polygonSource, setPolygonSource] = useState<VectorSource | null>(null);
   const drawRef = useRef<Draw | null>(null);
   const overlayRef = useRef<Overlay | null>(null);
 
@@ -184,6 +190,7 @@ export function SearchMap({
   const clearPolygon = () => {
     polygonSourceRef.current?.clear();
     onCoordinatesChange([]);
+    onClear?.();
   };
 
   // --- Build polygon from coordinates prop ---
@@ -273,6 +280,7 @@ export function SearchMap({
     const polygonSource = new VectorSource();
     const pointsSource = new VectorSource();
     polygonSourceRef.current = polygonSource;
+    setPolygonSource(polygonSource);
     pointsSourceRef.current = pointsSource;
 
     const polygonLayer = new VectorLayer({
@@ -340,10 +348,12 @@ export function SearchMap({
     });
 
     mapInstance.current = map;
+    setMapReady(map);
 
     return () => {
       map.setTarget(undefined);
       mapInstance.current = null;
+      setMapReady(null);
       polygonSourceRef.current = null;
       pointsSourceRef.current = null;
     };
@@ -506,6 +516,16 @@ export function SearchMap({
               )}
             </>
           )}
+        </div>
+
+        {/* Polygon area — bottom left */}
+        <div className="absolute bottom-3 left-12 z-10">
+          <PolygonArea source={polygonSource} />
+        </div>
+
+        {/* Measure tool — bottom right */}
+        <div className="absolute bottom-3 right-3 z-10">
+          <MeasureTool map={mapReady} />
         </div>
 
         {/* Drawing hint */}

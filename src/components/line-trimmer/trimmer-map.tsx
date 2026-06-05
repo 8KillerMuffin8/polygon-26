@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import Map from "ol/Map";
 import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
@@ -13,6 +13,8 @@ import OlPolygon from "ol/geom/Polygon";
 import { fromLonLat } from "ol/proj";
 import { extend, createEmpty } from "ol/extent";
 import { Style, Fill, Stroke } from "ol/style";
+import { MeasureTool } from "@/components/map/measure-tool";
+import { PolygonArea } from "@/components/map/polygon-area";
 import type { Feature as GeoJSONFeature, LineString, Polygon } from "geojson";
 import "ol/ol.css";
 
@@ -29,7 +31,9 @@ export function TrimmerMap({
 }: TrimmerMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<Map | null>(null);
+  const [mapReady, setMapReady] = useState<Map | null>(null);
   const polygonSourceRef = useRef<VectorSource | null>(null);
+  const [polygonSource, setPolygonSource] = useState<VectorSource | null>(null);
   const originalLinesSourceRef = useRef<VectorSource | null>(null);
   const trimmedLinesSourceRef = useRef<VectorSource | null>(null);
 
@@ -41,6 +45,7 @@ export function TrimmerMap({
     const originalLinesSource = new VectorSource();
     const trimmedLinesSource = new VectorSource();
     polygonSourceRef.current = polygonSource;
+    setPolygonSource(polygonSource);
     originalLinesSourceRef.current = originalLinesSource;
     trimmedLinesSourceRef.current = trimmedLinesSource;
 
@@ -91,10 +96,12 @@ export function TrimmerMap({
     });
 
     mapInstance.current = map;
+    setMapReady(map);
 
     return () => {
       map.setTarget(undefined);
       mapInstance.current = null;
+      setMapReady(null);
     };
   }, []);
 
@@ -182,9 +189,17 @@ export function TrimmerMap({
   }, [polyGeoJson, originalLines, trimmedLines]);
 
   return (
-    <div
-      ref={mapRef}
-      className="ol-map w-full h-[500px] rounded-md border overflow-hidden"
-    />
+    <div className="relative">
+      <div
+        ref={mapRef}
+        className="ol-map w-full h-[500px] rounded-md border overflow-hidden"
+      />
+      <div className="absolute bottom-3 left-3 z-10">
+        <PolygonArea source={polygonSource} />
+      </div>
+      <div className="absolute bottom-3 right-3 z-10">
+        <MeasureTool map={mapReady} />
+      </div>
+    </div>
   );
 }

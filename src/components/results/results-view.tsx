@@ -82,6 +82,7 @@ export function ResultsView({
         coordinates={coordinates}
         results={results}
         onCoordinatesChange={onCoordinatesChange}
+        onClear={onClear}
       />
     </div>
   );

@@ -64,10 +64,27 @@ function trimLineToPolygon(
   return keepExternal ? line : null;
 }
 
+export function parseAltitudeFile(json: Record<string, unknown>): number[] {
+  const root = json.root as Record<string, unknown> | undefined;
+  const mpi = root?.MissionPlanInfo as Record<string, unknown> | undefined;
+  const targets = mpi?.target as Record<string, unknown>[] | undefined;
+  const tasks = targets?.[0]?.tasks as Record<string, unknown>[] | undefined;
+  if (!tasks || tasks.length === 0) {
+    throw new Error("No tasks found in altitude file");
+  }
+  return tasks.map((task) => {
+    const waypoints = task.waypoint as Record<string, unknown>[] | undefined;
+    const coord = waypoints?.[0]?.wgs84_coord as Record<string, string> | undefined;
+    const alt = coord?.["@alt_asl"];
+    return alt ? parseFloat(alt) : 0;
+  });
+}
+
 export function processLines(
   polyGeoJson: GeoJSON.FeatureCollection,
   linesGeoJson: GeoJSON.FeatureCollection,
-  keepExternal: boolean
+  keepExternal: boolean,
+  altitudes?: number[]
 ): TrimResult {
   const lines = linesGeoJson.features.filter(
     (f): f is Feature<LineString> => f.geometry.type === "LineString"
@@ -83,7 +100,17 @@ export function processLines(
   );
 
   const trimmedLines = lines
-    .map((line) => trimLineToPolygon(line, poly, keepExternal))
+    .map((line, i) => {
+      const trimmed = trimLineToPolygon(line, poly, keepExternal);
+      if (!trimmed) return null;
+      if (altitudes && altitudes[i] !== undefined) {
+        const alt = altitudes[i];
+        trimmed.geometry.coordinates = trimmed.geometry.coordinates.map(
+          (coord) => [coord[0], coord[1], alt]
+        );
+      }
+      return trimmed;
+    })
     .filter((f): f is Feature<LineString> => f !== null);
 
   const csvData: string[][] = [
@@ -107,10 +134,10 @@ export function processLines(
       String(index + 1),
       String(start[1]),
       String(start[0]),
-      start[2] !== undefined ? start[2].toFixed(0) : "0",
+      start[2] !== undefined ? start[2].toFixed(1) : "0",
       String(end[1]),
       String(end[0]),
-      end[2] !== undefined ? end[2].toFixed(0) : "0",
+      end[2] !== undefined ? end[2].toFixed(1) : "0",
     ]);
   });
 
