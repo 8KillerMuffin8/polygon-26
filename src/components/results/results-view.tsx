@@ -1,12 +1,22 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { saveToSearchImport } from "@/actions/save-to-search-import";
+import { ExportDialog } from "@/components/results/export-dialog";
 import { toast } from "sonner";
-import { Trash2, Save, Loader2 } from "lucide-react";
-import type { Coordinate, ImageRecord } from "@/types";
+import {
+  Trash2,
+  Save,
+  Loader2,
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Download,
+} from "lucide-react";
+import type { ImageRecord, SearchPolygon } from "@/types";
 
 const SearchMap = dynamic(
   () =>
@@ -20,27 +30,115 @@ const SearchMap = dynamic(
         Loading map...
       </div>
     ),
-  }
+  },
 );
 
 interface ResultsViewProps {
-  coordinates: Coordinate[];
-  results: ImageRecord[];
-  onCoordinatesChange: (coords: Coordinate[]) => void;
-  onClear: () => void;
+  polygons: SearchPolygon[];
+  onPolygonsChange: (polygons: SearchPolygon[]) => void;
+  onSearch: () => void;
+  isSearching: boolean;
+  isGuest?: boolean;
+}
+
+function filterResults(
+  results: ImageRecord[],
+  resolution: string,
+  dateFrom: string,
+  dateTo: string,
+): ImageRecord[] {
+  return results.filter((r) => {
+    if (resolution && r.resolution !== resolution) return false;
+    if (dateFrom || dateTo) {
+      const raw = r.Datetimeoriginal;
+      const d = raw
+        ? (typeof raw === "string" ? raw : new Date(raw).toISOString()).slice(
+            0,
+            10,
+          )
+        : "";
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+    }
+    return true;
+  });
 }
 
 export function ResultsView({
-  coordinates,
-  results,
-  onCoordinatesChange,
-  onClear,
+  polygons,
+  onPolygonsChange,
+  onSearch,
+  isSearching,
+  isGuest = false,
 }: ResultsViewProps) {
   const [isSaving, startSaving] = useTransition();
+  const [resolution, setResolution] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState<{
+    data: ImageRecord[];
+    filename: string;
+  } | null>(null);
+
+  const allResults = useMemo(
+    () => polygons.flatMap((p) => p.results),
+    [polygons],
+  );
+
+  const resolutionOptions = useMemo(() => {
+    const values = new Set(allResults.map((r) => r.resolution).filter(Boolean));
+    return Array.from(values).sort();
+  }, [allResults]);
+
+  const filteredByPolygon = useMemo(() => {
+    return polygons.map((p) => ({
+      polygon: p,
+      results: filterResults(p.results, resolution, dateFrom, dateTo),
+    }));
+  }, [polygons, resolution, dateFrom, dateTo]);
+
+  const filteredResults = useMemo(
+    () =>
+      filteredByPolygon.flatMap(({ polygon, results }) =>
+        results.map((r) => ({
+          ...r,
+          polygonId: polygon.id,
+          color: polygon.color,
+        })),
+      ),
+    [filteredByPolygon],
+  );
+
+  const totalFiltered = filteredResults.length;
+  const totalRaw = allResults.length;
+  const hasFilters = resolution !== "" || dateFrom !== "" || dateTo !== "";
+  const hasSearchablePolygons = polygons.some((p) => {
+    const valid = p.coordinates.filter(
+      (c) => c.latitude !== 0 || c.longitude !== 0,
+    );
+    return valid.length >= 3;
+  });
+
+  const toggleCollapsed = (id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleClearResults = () => {
+    onPolygonsChange(polygons.map((p) => ({ ...p, results: [] })));
+  };
 
   const handleSave = () => {
     startSaving(async () => {
-      const res = await saveToSearchImport(results.map((r) => r.SourceFile));
+      const files = filteredResults.map((r) => r.SourceFile);
+      const res = await saveToSearchImport(files);
       if (res.success) {
         toast.success("Results saved to database");
       } else {
@@ -49,41 +147,215 @@ export function ResultsView({
     });
   };
 
+  const clearFilters = () => {
+    setResolution("");
+    setDateFrom("");
+    setDateTo("");
+  };
+
+  const openPolygonExport = (
+    polygon: SearchPolygon,
+    results: ImageRecord[],
+  ) => {
+    const slug = polygon.name
+      .replace(/[^a-z0-9]+/gi, "_")
+      .replace(/^_|_$/g, "");
+    setExportTarget({
+      data: results,
+      filename: `polygon_search_${slug || polygon.id}`,
+    });
+    setExportOpen(true);
+  };
+
   return (
     <div className="space-y-4">
-      {results.length > 0 && (
-        <div className="flex items-center justify-between">
-          <p className="text-xl font-semibold text-foreground">
-            {results.length.toLocaleString()} result{results.length !== 1 ? "s" : ""} found
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSave}
-              disabled={isSaving}
-            >
-              {isSaving ? (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          {totalRaw > 0 && (
+            <p className="text-xl font-semibold text-foreground">
+              {totalFiltered.toLocaleString()} result
+              {totalFiltered !== 1 ? "s" : ""} found
+              {polygons.filter((p) => p.results.length > 0).length > 1 &&
+                ` across ${polygons.filter((p) => p.results.length > 0).length} polygons`}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={onSearch}
+            disabled={isSearching || !hasSearchablePolygons}
+            size="sm"
+          >
+            {isSearching ? (
+              <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4 mr-2" />
+                Searching...
+              </>
+            ) : (
+              <>
+                <Search className="h-4 w-4 mr-2" />
+                Search
+              </>
+            )}
+          </Button>
+          {totalRaw > 0 && (
+            <>
+              {!isGuest && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={isSaving || totalFiltered === 0}
+                >
+                  {isSaving ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4 mr-2" />
+                  )}
+                  Save to DB
+                </Button>
               )}
-              Save to DB
-            </Button>
-            <Button variant="outline" size="sm" onClick={onClear}>
-              <Trash2 className="h-4 w-4 mr-2" />
-              Clear
-            </Button>
+              <Button variant="outline" size="sm" onClick={handleClearResults}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                Clear results
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {totalRaw > 0 && (
+        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-muted-foreground">Resolution</label>
+            <select
+              value={resolution}
+              onChange={(e) => setResolution(e.target.value)}
+              className="h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+            >
+              <option value="">All</option>
+              {resolutionOptions.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-muted-foreground">Start date</label>
+            <Input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-muted-foreground">End date</label>
+            <Input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-[150px]"
+            />
+          </div>
+          {hasFilters && (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground ml-auto pb-1">
+            {totalFiltered} of {totalRaw} shown
+          </p>
         </div>
       )}
 
       <SearchMap
-        coordinates={coordinates}
-        results={results}
-        onCoordinatesChange={onCoordinatesChange}
-        onClear={onClear}
+        polygons={polygons}
+        onPolygonsChange={onPolygonsChange}
+        filteredResults={filteredResults}
+        isGuest={isGuest}
       />
+
+      {filteredByPolygon.some((g) => g.results.length > 0) && (
+        <div className="space-y-2">
+          {filteredByPolygon
+            .filter((g) => g.results.length > 0)
+            .map(({ polygon, results }) => {
+              const isCollapsed = collapsed.has(polygon.id);
+              return (
+                <div
+                  key={polygon.id}
+                  className="rounded-md border bg-card overflow-hidden"
+                >
+                  <div className="flex items-center gap-2 px-4 py-3 hover:bg-muted/50">
+                    <button
+                      type="button"
+                      className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                      onClick={() => toggleCollapsed(polygon.id)}
+                    >
+                      {isCollapsed ? (
+                        <ChevronRight className="h-4 w-4 shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-4 w-4 shrink-0" />
+                      )}
+                      <span
+                        className="h-3 w-3 rounded-sm shrink-0"
+                        style={{ backgroundColor: polygon.color }}
+                      />
+                      <span className="font-medium truncate">
+                        {polygon.name}
+                      </span>
+                      <span className="text-sm text-muted-foreground shrink-0">
+                        — {results.length} result
+                        {results.length !== 1 ? "s" : ""}
+                      </span>
+                    </button>
+                    {!isGuest && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => openPolygonExport(polygon, results)}
+                      >
+                        <Download className="h-4 w-4 mr-1" />
+                        Export
+                      </Button>
+                    )}
+                  </div>
+                  {!isCollapsed && (
+                    <div className="border-t px-4 py-2 max-h-48 overflow-y-auto">
+                      <ul className="text-sm space-y-1">
+                        {results.map((r) => (
+                          <li
+                            key={r.SourceFile}
+                            className="text-muted-foreground truncate"
+                          >
+                            {r.SourceFile}
+                            {r.resolution && (
+                              <span className="ml-2 text-xs">
+                                ({r.resolution})
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
+
+      {!isGuest && exportTarget && (
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          data={exportTarget.data}
+          filename={exportTarget.filename}
+        />
+      )}
     </div>
   );
 }

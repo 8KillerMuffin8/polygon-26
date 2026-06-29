@@ -18,6 +18,7 @@ const ALL_COLUMNS: { key: keyof ImageRecord; label: string }[] = [
   { key: "SourceFile", label: "Source File" },
   { key: "GPSLatitude", label: "Latitude" },
   { key: "GPSLongitude", label: "Longitude" },
+  { key: "GPSAltitude", label: "Altitude" },
   { key: "Datetimeoriginal", label: "Date" },
   { key: "target", label: "Target" },
   { key: "IMURoll", label: "IMU Roll" },
@@ -41,7 +42,15 @@ export function ExportDialog({
   filename,
 }: ExportDialogProps) {
   const [selected, setSelected] = useState<Set<string>>(
-    new Set(["SourceFile", "GPSLatitude", "GPSLongitude", "Datetimeoriginal", "target", "resolution"])
+    new Set([
+      "SourceFile",
+      "GPSLatitude",
+      "GPSLongitude",
+      "GPSAltitude",
+      "Datetimeoriginal",
+      "target",
+      "resolution",
+    ]),
   );
 
   const toggle = (key: string) => {
@@ -55,14 +64,20 @@ export function ExportDialog({
   };
 
   const handleExport = () => {
-    const cols = ALL_COLUMNS.filter((c) => selected.has(c.key)).map((c) => c.key);
+    const cols = ALL_COLUMNS.filter((c) => selected.has(c.key)).map(
+      (c) => c.key,
+    );
     const formatted = data.map((row) => ({
       ...row,
       Datetimeoriginal: row.Datetimeoriginal
         ? formatDate(row.Datetimeoriginal)
         : "",
     }));
-    downloadCsv(formatted as unknown as Record<string, unknown>[], cols, filename);
+    downloadCsv(
+      formatted as unknown as Record<string, unknown>[],
+      cols,
+      filename,
+    );
     onOpenChange(false);
   };
 

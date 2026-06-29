@@ -20,102 +20,119 @@ import Polygon from "ol/geom/Polygon";
 import Overlay from "ol/Overlay";
 import Draw from "ol/interaction/Draw";
 import { fromLonLat, toLonLat } from "ol/proj";
-import { extend, createEmpty } from "ol/extent";
+import { getArea } from "ol/sphere";
 import { Style, Fill, Stroke, Circle as CircleStyle } from "ol/style";
+import type { FeatureLike } from "ol/Feature";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ExportDialog } from "@/components/results/export-dialog";
 import { formatDate } from "@/utils/format-date";
-import {
-  Download,
-  X,
-  Pencil,
-  Search,
-  MapPin,
-  Trash2,
-} from "lucide-react";
+import { Download, X, Pencil, MapPin, Trash2, Upload } from "lucide-react";
 import { MeasureTool } from "@/components/map/measure-tool";
-import { PolygonArea } from "@/components/map/polygon-area";
-import type { Coordinate } from "@/types";
-import type { ImageRecord } from "@/types";
+import { MapResizeContainer } from "@/components/map/map-resize-container";
+import { PolygonLegend } from "@/components/map/polygon-legend";
+import { KmlUploadDialog } from "@/components/search/kml-upload-dialog";
+import {
+  createSearchPolygon,
+  hexToFill,
+  hexToStroke,
+} from "@/lib/geo/polygon-colors";
+import { toast } from "sonner";
+import type { Coordinate, ImageRecord, SearchPolygon } from "@/types";
+import type { KmlPolygonImport } from "@/lib/geo/parse-kml";
 import "ol/ol.css";
 
 interface SearchMapProps {
-  coordinates: Coordinate[];
-  results: ImageRecord[];
-  onCoordinatesChange: (coords: Coordinate[]) => void;
-  onClear?: () => void;
+  polygons: SearchPolygon[];
+  onPolygonsChange: (polygons: SearchPolygon[]) => void;
+  filteredResults: Array<ImageRecord & { polygonId: string; color: string }>;
+  isGuest?: boolean;
+}
+
+function buildPolygonFeature(polygon: SearchPolygon): Feature<Polygon> | null {
+  const validCoords = polygon.coordinates.filter(
+    (c) => c.latitude !== 0 || c.longitude !== 0,
+  );
+  if (validCoords.length < 3) return null;
+
+  const ring = validCoords.map((c) => fromLonLat([c.longitude, c.latitude]));
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    ring.push(first);
+  }
+
+  const feature = new Feature(new Polygon([ring]));
+  feature.set("polygonId", polygon.id);
+  feature.set("name", polygon.name);
+  feature.set("color", polygon.color);
+  return feature;
+}
+
+function polygonStyle(feature: FeatureLike, highlightedId: string | null) {
+  const color = (feature.get("color") as string) ?? "#3b82f6";
+  const polygonId = feature.get("polygonId") as string;
+  const highlighted = highlightedId === polygonId;
+
+  return new Style({
+    fill: new Fill({ color: hexToFill(color, highlighted ? 0.25 : 0.15) }),
+    stroke: new Stroke({
+      color: hexToStroke(color),
+      width: highlighted ? 3 : 2,
+    }),
+  });
+}
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 export function SearchMap({
-  coordinates,
-  results,
-  onCoordinatesChange,
-  onClear,
+  polygons,
+  onPolygonsChange,
+  filteredResults,
+  isGuest = false,
 }: SearchMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
+  const hoverRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<Map | null>(null);
   const [mapReady, setMapReady] = useState<Map | null>(null);
   const pointsSourceRef = useRef<VectorSource | null>(null);
   const polygonSourceRef = useRef<VectorSource | null>(null);
-  const [polygonSource, setPolygonSource] = useState<VectorSource | null>(null);
+  const polygonLayerRef = useRef<VectorLayer | null>(null);
   const drawRef = useRef<Draw | null>(null);
   const overlayRef = useRef<Overlay | null>(null);
+  const hoverOverlayRef = useRef<Overlay | null>(null);
+  const polygonsRef = useRef(polygons);
+
+  useEffect(() => {
+    polygonsRef.current = polygons;
+  }, [polygons]);
 
   const [isDrawing, setIsDrawing] = useState(false);
+  const [kmlOpen, setKmlOpen] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [locationQuery, setLocationQuery] = useState("");
   const [locationResults, setLocationResults] = useState<
     { display_name: string; lat: string; lon: string }[]
   >([]);
   const [showLocationResults, setShowLocationResults] = useState(false);
-
-  // Filter state
-  const [resolution, setResolution] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
 
-  const resolutionOptions = useMemo(() => {
-    const values = new Set(results.map((r) => r.resolution).filter(Boolean));
-    return Array.from(values).sort();
-  }, [results]);
+  const hasAnyResults = filteredResults.length > 0;
 
-  const filteredResults = useMemo(() => {
-    return results.filter((r) => {
-      if (resolution && r.resolution !== resolution) return false;
-      if (dateFrom || dateTo) {
-        const raw = r.Datetimeoriginal;
-        const d = raw
-          ? (typeof raw === "string"
-              ? raw
-              : new Date(raw).toISOString()
-            ).slice(0, 10)
-          : "";
-        if (!d) return false;
-        if (dateFrom && d < dateFrom) return false;
-        if (dateTo && d > dateTo) return false;
-      }
-      return true;
-    });
-  }, [results, resolution, dateFrom, dateTo]);
-
-  const hasFilters = resolution !== "" || dateFrom !== "" || dateTo !== "";
-
-  const clearFilters = () => {
-    setResolution("");
-    setDateFrom("");
-    setDateTo("");
-  };
-
-  // --- Location search via Nominatim ---
   const handleLocationSearch = async (e: FormEvent) => {
     e.preventDefault();
     if (!locationQuery.trim()) return;
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationQuery)}&limit=5`,
-        { headers: { "Accept-Language": "en" } }
+        { headers: { "Accept-Language": "en" } },
       );
       const data = await res.json();
       setLocationResults(data);
@@ -137,25 +154,60 @@ export function SearchMap({
     setLocationQuery("");
   };
 
-  // --- Draw polygon ---
+  const updatePolygon = useCallback(
+    (id: string, patch: Partial<Pick<SearchPolygon, "name" | "color">>) => {
+      onPolygonsChange(
+        polygons.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+      );
+    },
+    [polygons, onPolygonsChange],
+  );
+
+  const deletePolygon = useCallback(
+    (id: string) => {
+      onPolygonsChange(polygons.filter((p) => p.id !== id));
+    },
+    [polygons, onPolygonsChange],
+  );
+
+  const zoomToPolygon = useCallback((id: string) => {
+    const map = mapInstance.current;
+    const source = polygonSourceRef.current;
+    if (!map || !source) return;
+
+    const feature = source.getFeatures().find((f) => f.get("polygonId") === id);
+    if (!feature) return;
+
+    const ext = feature.getGeometry()?.getExtent();
+    if (ext) {
+      map.getView().fit(ext, {
+        padding: [50, 50, 50, 50],
+        maxZoom: 18,
+        duration: 500,
+      });
+    }
+  }, []);
+
   const startDrawing = () => {
     const map = mapInstance.current;
     const polygonSource = polygonSourceRef.current;
     if (!map || !polygonSource) return;
 
-    // Clear existing polygon
-    polygonSource.clear();
-    onCoordinatesChange([]);
+    const drawColor = createSearchPolygon([], polygons).color;
 
     const draw = new Draw({
       source: polygonSource,
       type: "Polygon",
       style: new Style({
-        fill: new Fill({ color: "rgba(59, 130, 246, 0.1)" }),
-        stroke: new Stroke({ color: "rgba(59, 130, 246, 0.8)", width: 2, lineDash: [8, 4] }),
+        fill: new Fill({ color: hexToFill(drawColor, 0.1) }),
+        stroke: new Stroke({
+          color: hexToStroke(drawColor),
+          width: 2,
+          lineDash: [8, 4],
+        }),
         image: new CircleStyle({
           radius: 5,
-          fill: new Fill({ color: "rgba(59, 130, 246, 0.8)" }),
+          fill: new Fill({ color: hexToStroke(drawColor) }),
         }),
       }),
     });
@@ -167,7 +219,12 @@ export function SearchMap({
         const [lon, lat] = toLonLat(c);
         return { latitude: lat, longitude: lon };
       });
-      onCoordinatesChange(wgs84Coords);
+
+      const newPolygon = createSearchPolygon(wgs84Coords, polygons);
+      onPolygonsChange([...polygons, newPolygon]);
+
+      polygonSource.removeFeature(evt.feature);
+
       map.removeInteraction(draw);
       drawRef.current = null;
       setIsDrawing(false);
@@ -187,53 +244,45 @@ export function SearchMap({
     setIsDrawing(false);
   };
 
-  const clearPolygon = () => {
-    polygonSourceRef.current?.clear();
-    onCoordinatesChange([]);
-    onClear?.();
+  const clearAll = () => {
+    onPolygonsChange([]);
   };
 
-  // --- Build polygon from coordinates prop ---
-  const buildPolygonFeature = useCallback(() => {
-    const validCoords = coordinates.filter(
-      (c) => c.latitude !== 0 || c.longitude !== 0
-    );
-    if (validCoords.length < 3) return null;
-
-    const ring = validCoords.map((c) => fromLonLat([c.longitude, c.latitude]));
-    const first = ring[0];
-    const last = ring[ring.length - 1];
-    if (first[0] !== last[0] || first[1] !== last[1]) {
-      ring.push(first);
+  const handleKmlImport = (items: KmlPolygonImport[]) => {
+    let current = [...polygons];
+    const added = items.map((item) => {
+      const p = createSearchPolygon(item.coordinates, current, item.name);
+      current = [...current, p];
+      return p;
+    });
+    onPolygonsChange([...polygons, ...added]);
+    if (added.length === 1) {
+      toast.success(`Imported polygon "${added[0].name}"`);
+    } else {
+      toast.success(`Imported ${added.length} polygons`);
     }
+  };
 
-    return new Feature(new Polygon([ring]));
-  }, [coordinates]);
-
-  // Update polygon when coordinates change externally
+  // Sync polygons to map features
   useEffect(() => {
     const source = polygonSourceRef.current;
-    if (!source) return;
-    // Don't overwrite if we're currently drawing
-    if (drawRef.current) return;
+    if (!source || drawRef.current) return;
 
     source.clear();
-    const feature = buildPolygonFeature();
-    if (feature) {
-      source.addFeature(feature);
-
-      // Fit to polygon
-      const map = mapInstance.current;
-      if (map) {
-        const ext = source.getExtent();
-        if (ext && ext[0] !== Infinity) {
-          map.getView().fit(ext, { padding: [50, 50, 50, 50], maxZoom: 18, duration: 500 });
-        }
-      }
+    for (const polygon of polygons) {
+      const feature = buildPolygonFeature(polygon);
+      if (feature) source.addFeature(feature);
     }
-  }, [buildPolygonFeature]);
+  }, [polygons]);
 
-  // Update points when filtered results change
+  // Update polygon layer style when highlight changes
+  useEffect(() => {
+    const layer = polygonLayerRef.current;
+    if (!layer) return;
+    layer.setStyle((feature) => polygonStyle(feature, highlightedId));
+  }, [highlightedId]);
+
+  // Update result points
   useEffect(() => {
     const source = pointsSourceRef.current;
     if (!source) return;
@@ -241,33 +290,18 @@ export function SearchMap({
     source.clear();
     const features = filteredResults.map((record) => {
       const feature = new Feature(
-        new PointGeom(fromLonLat([record.GPSLongitude, record.GPSLatitude]))
+        new PointGeom(fromLonLat([record.GPSLongitude, record.GPSLatitude])),
       );
       feature.set("record", record);
+      feature.set("color", record.color);
       return feature;
     });
     source.addFeatures(features);
-
-    // Fit to all features when results change
-    const map = mapInstance.current;
-    const polygonSource = polygonSourceRef.current;
-    if (map && features.length > 0) {
-      const extent = createEmpty();
-      if (polygonSource && polygonSource.getFeatures().length > 0) {
-        const pe = polygonSource.getExtent();
-        if (pe) extend(extent, pe);
-      }
-      const pte = source.getExtent();
-      if (pte) extend(extent, pte);
-      if (extent[0] !== Infinity) {
-        map.getView().fit(extent, { padding: [50, 50, 50, 50], maxZoom: 18, duration: 500 });
-      }
-    }
   }, [filteredResults]);
 
-  // --- Initialize the map (once) ---
+  // Initialize map
   useEffect(() => {
-    if (!mapRef.current || !popupRef.current) return;
+    if (!mapRef.current || !popupRef.current || !hoverRef.current) return;
 
     const overlay = new Overlay({
       element: popupRef.current,
@@ -277,44 +311,53 @@ export function SearchMap({
     });
     overlayRef.current = overlay;
 
+    const hoverOverlay = new Overlay({
+      element: hoverRef.current,
+      positioning: "bottom-center",
+      offset: [0, -8],
+      stopEvent: false,
+    });
+    hoverOverlayRef.current = hoverOverlay;
+
     const polygonSource = new VectorSource();
     const pointsSource = new VectorSource();
     polygonSourceRef.current = polygonSource;
-    setPolygonSource(polygonSource);
     pointsSourceRef.current = pointsSource;
 
     const polygonLayer = new VectorLayer({
       source: polygonSource,
-      style: new Style({
-        fill: new Fill({ color: "rgba(59, 130, 246, 0.15)" }),
-        stroke: new Stroke({ color: "rgba(59, 130, 246, 0.8)", width: 2 }),
-      }),
+      style: (feature) => polygonStyle(feature, null),
     });
+    polygonLayerRef.current = polygonLayer;
 
     const pointsLayer = new VectorLayer({
       source: pointsSource,
-      style: new Style({
-        image: new CircleStyle({
-          radius: 6,
-          fill: new Fill({ color: "#f59e0b" }),
-          stroke: new Stroke({ color: "#ffffff", width: 2 }),
-        }),
-      }),
+      style: (feature) => {
+        const color = (feature.get("color") as string) ?? "#f59e0b";
+        return new Style({
+          image: new CircleStyle({
+            radius: 6,
+            fill: new Fill({ color }),
+            stroke: new Stroke({ color: "#ffffff", width: 2 }),
+          }),
+        });
+      },
     });
 
     const map = new Map({
       target: mapRef.current,
       layers: [new TileLayer({ source: new OSM() }), polygonLayer, pointsLayer],
-      overlays: [overlay],
+      overlays: [overlay, hoverOverlay],
       view: new View({
         center: fromLonLat([34.8, 31.5]),
         zoom: 8,
       }),
     });
 
-    // Click handler for popups
     map.on("click", (evt) => {
-      const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f);
+      const feature = map.forEachFeatureAtPixel(evt.pixel, (f) => f, {
+        layerFilter: (l) => l === pointsLayer,
+      });
       if (feature && feature.get("record")) {
         const record = feature.get("record") as ImageRecord;
         const el = popupRef.current;
@@ -338,13 +381,47 @@ export function SearchMap({
       }
     });
 
-    // Pointer cursor on point features
     map.on("pointermove", (evt) => {
       if (drawRef.current) return;
-      const hit = map.hasFeatureAtPixel(evt.pixel, {
+
+      const pointHit = map.hasFeatureAtPixel(evt.pixel, {
         layerFilter: (l) => l === pointsLayer,
       });
-      map.getTargetElement().style.cursor = hit ? "pointer" : "";
+      if (pointHit) {
+        map.getTargetElement().style.cursor = "pointer";
+        hoverOverlay.setPosition(undefined);
+        return;
+      }
+
+      const polygonFeature = map.forEachFeatureAtPixel(evt.pixel, (f) => f, {
+        layerFilter: (l) => l === polygonLayer,
+      });
+
+      if (polygonFeature) {
+        map.getTargetElement().style.cursor = "pointer";
+        const polygonId = polygonFeature.get("polygonId") as string;
+        const name = polygonFeature.get("name") as string;
+        const geom = polygonFeature.getGeometry() as Polygon;
+        const areaKm2 = geom ? getArea(geom) / 1_000_000 : 0;
+        const ring = geom?.getCoordinates()[0] ?? [];
+        const vertices =
+          ring.length > 0 && ring.length > 1 ? ring.length - 1 : ring.length;
+        const poly = polygonsRef.current.find((p) => p.id === polygonId);
+        const resultCount = poly?.results.length ?? 0;
+
+        const el = hoverRef.current;
+        if (el) {
+          el.innerHTML = `
+            <div class="bg-popover text-popover-foreground rounded-md border shadow-md px-3 py-1.5 text-xs whitespace-nowrap pointer-events-none">
+              ${escapeHtml(name)} · ${vertices} vertices · ${areaKm2.toFixed(2)} km²${resultCount > 0 ? ` · ${resultCount} results` : ""}
+            </div>
+          `;
+          hoverOverlay.setPosition(evt.coordinate);
+        }
+      } else {
+        map.getTargetElement().style.cursor = "";
+        hoverOverlay.setPosition(undefined);
+      }
     });
 
     mapInstance.current = map;
@@ -356,200 +433,172 @@ export function SearchMap({
       setMapReady(null);
       polygonSourceRef.current = null;
       pointsSourceRef.current = null;
+      polygonLayerRef.current = null;
     };
-    // Initialize only once
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasPolygon = coordinates.some(
-    (c) => c.latitude !== 0 || c.longitude !== 0
+  const handleMapResize = useCallback(() => {
+    mapInstance.current?.updateSize();
+  }, []);
+
+  const exportData = useMemo(
+    () => filteredResults.map(({ polygonId: _p, color: _c, ...r }) => r),
+    [filteredResults],
   );
 
   return (
     <div className="space-y-3">
-      {/* Filter bar — only when results exist */}
-      {results.length > 0 && (
-        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">Resolution</label>
-            <select
-              value={resolution}
-              onChange={(e) => setResolution(e.target.value)}
-              className="h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            >
-              <option value="">All</option>
-              {resolutionOptions.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">Start date</label>
-            <Input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
-              className="w-[150px]"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">End date</label>
-            <Input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
-              className="w-[150px]"
-            />
-          </div>
-          {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              <X className="h-4 w-4 mr-1" />
-              Clear
-            </Button>
-          )}
-          <div className="ml-auto flex items-end gap-2">
-            <p className="text-xs text-muted-foreground pb-1">
-              {filteredResults.length} of {results.length} shown
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setExportOpen(true)}
-            >
-              <Download className="h-4 w-4 mr-1" />
-              Export filtered
-            </Button>
-          </div>
-        </div>
-      )}
+      <MapResizeContainer onResize={handleMapResize}>
+        <div className="relative h-full">
+          <div
+            ref={mapRef}
+            className="ol-map w-full h-full rounded-md border overflow-hidden"
+          />
+          <div ref={popupRef} className="ol-popup" />
+          <div ref={hoverRef} className="ol-popup" />
 
-      {/* Map container */}
-      <div className="relative">
-        <div
-          ref={mapRef}
-          className="ol-map w-full h-[500px] rounded-md border overflow-hidden"
-        />
-        <div ref={popupRef} className="ol-popup" />
-
-        {/* Map overlay controls — top left */}
-        <div className="absolute top-3 left-12 z-10 flex flex-col gap-2">
-          {/* Location search */}
-          <form onSubmit={handleLocationSearch} className="relative">
-            <div className="flex gap-1">
-              <Input
-                type="text"
-                placeholder="Search location..."
-                value={locationQuery}
-                onChange={(e) => {
-                  setLocationQuery(e.target.value);
-                  if (!e.target.value) setShowLocationResults(false);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleLocationSearch(e as unknown as FormEvent);
-                  }
-                }}
-                className="w-[220px] bg-background/90 backdrop-blur-sm shadow-md text-sm"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                variant="secondary"
-                className="shadow-md"
-              >
-                <MapPin className="h-4 w-4" />
-              </Button>
-            </div>
-            {showLocationResults && locationResults.length > 0 && (
-              <div className="absolute top-full left-0 mt-1 w-[300px] rounded-md border bg-popover text-popover-foreground shadow-lg max-h-[200px] overflow-y-auto z-20">
-                {locationResults.map((loc, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent truncate"
-                    onClick={() => flyTo(parseFloat(loc.lon), parseFloat(loc.lat))}
-                  >
-                    {loc.display_name}
-                  </button>
-                ))}
+          <div className="absolute top-3 left-12 z-10 flex flex-col gap-2">
+            <form onSubmit={handleLocationSearch} className="relative">
+              <div className="flex gap-1">
+                <Input
+                  type="text"
+                  placeholder="Search location..."
+                  value={locationQuery}
+                  onChange={(e) => {
+                    setLocationQuery(e.target.value);
+                    if (!e.target.value) setShowLocationResults(false);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleLocationSearch(e as unknown as FormEvent);
+                    }
+                  }}
+                  className="w-[220px] bg-background/90 backdrop-blur-sm shadow-md text-sm"
+                />
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="secondary"
+                  className="shadow-md"
+                >
+                  <MapPin className="h-4 w-4" />
+                </Button>
               </div>
-            )}
-          </form>
-        </div>
+              {showLocationResults && locationResults.length > 0 && (
+                <div className="absolute top-full left-0 mt-1 w-[300px] rounded-md border bg-popover text-popover-foreground shadow-lg max-h-[200px] overflow-y-auto z-20">
+                  {locationResults.map((loc, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-accent truncate"
+                      onClick={() =>
+                        flyTo(parseFloat(loc.lon), parseFloat(loc.lat))
+                      }
+                    >
+                      {loc.display_name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </form>
+          </div>
 
-        {/* Draw controls — top right */}
-        <div className="absolute top-3 right-3 z-10 flex gap-2">
-          {isDrawing ? (
-            <Button
-              size="sm"
-              variant="destructive"
-              className="shadow-md"
-              onClick={cancelDrawing}
-            >
-              <X className="h-4 w-4 mr-1" />
-              Cancel
-            </Button>
-          ) : (
-            <>
+          <div className="absolute top-3 right-3 z-10 flex gap-2">
+            {isDrawing ? (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="destructive"
                 className="shadow-md"
-                onClick={startDrawing}
+                onClick={cancelDrawing}
               >
-                <Pencil className="h-4 w-4 mr-1" />
-                Draw Polygon
+                <X className="h-4 w-4 mr-1" />
+                Cancel
               </Button>
-              {hasPolygon && (
+            ) : (
+              <>
                 <Button
                   size="sm"
                   variant="secondary"
                   className="shadow-md"
-                  onClick={clearPolygon}
+                  onClick={startDrawing}
                 >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Clear
+                  <Pencil className="h-4 w-4 mr-1" />
+                  Draw Polygon
                 </Button>
-              )}
-            </>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="shadow-md"
+                  onClick={() => setKmlOpen(true)}
+                >
+                  <Upload className="h-4 w-4 mr-1" />
+                  Import KML
+                </Button>
+                {polygons.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="shadow-md"
+                    onClick={clearAll}
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" />
+                    Clear all
+                  </Button>
+                )}
+                {hasAnyResults && !isGuest && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shadow-md bg-background/90"
+                    onClick={() => setExportOpen(true)}
+                  >
+                    <Download className="h-4 w-4 mr-1" />
+                    Export
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="absolute bottom-3 left-12 z-10">
+            <PolygonLegend
+              polygons={polygons}
+              highlightedId={highlightedId}
+              onHighlight={setHighlightedId}
+              onUpdate={updatePolygon}
+              onDelete={deletePolygon}
+              onZoomTo={zoomToPolygon}
+            />
+          </div>
+
+          <div className="absolute bottom-3 right-3 z-10">
+            <MeasureTool map={mapReady} />
+          </div>
+
+          {isDrawing && (
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 bg-background/90 backdrop-blur-sm rounded-md border shadow-md px-4 py-2 text-sm text-muted-foreground">
+              Click to add points. Double-click to finish polygon.
+            </div>
           )}
         </div>
+      </MapResizeContainer>
 
-        {/* Polygon area — bottom left */}
-        <div className="absolute bottom-3 left-12 z-10">
-          <PolygonArea source={polygonSource} />
-        </div>
-
-        {/* Measure tool — bottom right */}
-        <div className="absolute bottom-3 right-3 z-10">
-          <MeasureTool map={mapReady} />
-        </div>
-
-        {/* Drawing hint */}
-        {isDrawing && (
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 bg-background/90 backdrop-blur-sm rounded-md border shadow-md px-4 py-2 text-sm text-muted-foreground">
-            Click to add points. Double-click to finish polygon.
-          </div>
-        )}
-      </div>
-
-      <ExportDialog
-        open={exportOpen}
-        onOpenChange={setExportOpen}
-        data={filteredResults}
-        filename="polygon_search_filtered"
+      <KmlUploadDialog
+        open={kmlOpen}
+        onOpenChange={setKmlOpen}
+        onApply={handleKmlImport}
       />
+
+      {!isGuest && (
+        <ExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          data={exportData}
+          filename="polygon_search_filtered"
+        />
+      )}
     </div>
   );
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

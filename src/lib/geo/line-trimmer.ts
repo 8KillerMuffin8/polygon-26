@@ -2,6 +2,11 @@ import { distance } from "@turf/distance";
 import { lineIntersect } from "@turf/line-intersect";
 import { lineSlice } from "@turf/line-slice";
 import { polygon as turfPolygon } from "@turf/helpers";
+import {
+  buildCsvFromFeatures,
+  initEditState,
+  type LineEditState,
+} from "@/lib/geo/line-path";
 import type { Feature, LineString, Polygon, Position } from "geojson";
 
 export interface TrimmedLine {
@@ -17,7 +22,7 @@ export interface TrimResult {
 function trimLineToPolygon(
   line: Feature<LineString>,
   poly: Feature<Polygon>,
-  keepExternal: boolean
+  keepExternal: boolean,
 ): Feature<LineString> | null {
   const intersection = lineIntersect(line, poly);
 
@@ -45,7 +50,6 @@ function trimLineToPolygon(
 
     const trimmedLine = lineSlice(startPoint, endPoint, line);
 
-    // Preserve altitude from original line coordinates
     const originalAlt = line.geometry.coordinates[0]?.[2];
     if (originalAlt !== undefined) {
       trimmedLine.geometry.coordinates = trimmedLine.geometry.coordinates.map(
@@ -54,7 +58,7 @@ function trimLineToPolygon(
             return [...coord, originalAlt];
           }
           return coord;
-        }
+        },
       );
     }
 
@@ -74,9 +78,27 @@ export function parseAltitudeFile(json: Record<string, unknown>): number[] {
   }
   return tasks.map((task) => {
     const waypoints = task.waypoint as Record<string, unknown>[] | undefined;
-    const coord = waypoints?.[0]?.wgs84_coord as Record<string, string> | undefined;
+    const coord = waypoints?.[0]?.wgs84_coord as
+      Record<string, string> | undefined;
     const alt = coord?.["@alt_asl"];
     return alt ? parseFloat(alt) : 0;
+  });
+}
+
+export function initEditStatesFromTrimResult(
+  originalLines: Feature<LineString>[],
+  trimmedFeatures: Feature<LineString>[],
+  originalLineIndices: number[],
+  altitudes?: number[],
+): LineEditState[] {
+  return trimmedFeatures.map((trimmed, i) => {
+    const originalIndex = originalLineIndices[i];
+    const original = originalLines[originalIndex];
+    const altitude =
+      altitudes && altitudes[originalIndex] !== undefined
+        ? altitudes[originalIndex]
+        : undefined;
+    return initEditState(original, trimmed, originalIndex, altitude);
   });
 }
 
@@ -84,10 +106,10 @@ export function processLines(
   polyGeoJson: GeoJSON.FeatureCollection,
   linesGeoJson: GeoJSON.FeatureCollection,
   keepExternal: boolean,
-  altitudes?: number[]
+  altitudes?: number[],
 ): TrimResult {
   const lines = linesGeoJson.features.filter(
-    (f): f is Feature<LineString> => f.geometry.type === "LineString"
+    (f): f is Feature<LineString> => f.geometry.type === "LineString",
   );
 
   const polyFeature = polyGeoJson.features[0];
@@ -95,9 +117,7 @@ export function processLines(
     throw new Error("No polygon found in the polygon KML file");
   }
 
-  const poly = turfPolygon(
-    (polyFeature.geometry as Polygon).coordinates
-  );
+  const poly = turfPolygon((polyFeature.geometry as Polygon).coordinates);
 
   const trimmedLines = lines
     .map((line, i) => {
@@ -106,40 +126,57 @@ export function processLines(
       if (altitudes && altitudes[i] !== undefined) {
         const alt = altitudes[i];
         trimmed.geometry.coordinates = trimmed.geometry.coordinates.map(
-          (coord) => [coord[0], coord[1], alt]
+          (coord) => [coord[0], coord[1], alt],
         );
       }
       return trimmed;
     })
     .filter((f): f is Feature<LineString> => f !== null);
 
-  const csvData: string[][] = [
-    [
-      "Name",
-      "Start latitude",
-      "Start longitude",
-      "Start altitude",
-      "Stop latitude",
-      "Stop longitude",
-      "Stop altitude",
-    ],
-  ];
-
-  trimmedLines.forEach((feature, index) => {
-    const coords = feature.geometry.coordinates;
-    const start = coords[0];
-    const end = coords[coords.length - 1];
-
-    csvData.push([
-      String(index + 1),
-      String(start[1]),
-      String(start[0]),
-      start[2] !== undefined ? start[2].toFixed(1) : "0",
-      String(end[1]),
-      String(end[0]),
-      end[2] !== undefined ? end[2].toFixed(1) : "0",
-    ]);
-  });
+  const csvData = buildCsvFromFeatures(trimmedLines);
 
   return { trimmedFeatures: trimmedLines, csvData };
 }
+
+export function processLinesToEditStates(
+  polyGeoJson: GeoJSON.FeatureCollection,
+  linesGeoJson: GeoJSON.FeatureCollection,
+  keepExternal: boolean,
+  altitudes?: number[],
+): LineEditState[] {
+  const lines = linesGeoJson.features.filter(
+    (f): f is Feature<LineString> => f.geometry.type === "LineString",
+  );
+
+  const polyFeature = polyGeoJson.features[0];
+  if (!polyFeature || polyFeature.geometry.type !== "Polygon") {
+    throw new Error("No polygon found in the polygon KML file");
+  }
+
+  const poly = turfPolygon((polyFeature.geometry as Polygon).coordinates);
+
+  const trimmedFeatures: Feature<LineString>[] = [];
+  const originalLineIndices: number[] = [];
+
+  lines.forEach((line, i) => {
+    const trimmed = trimLineToPolygon(line, poly, keepExternal);
+    if (!trimmed) return;
+    if (altitudes && altitudes[i] !== undefined) {
+      const alt = altitudes[i];
+      trimmed.geometry.coordinates = trimmed.geometry.coordinates.map(
+        (coord) => [coord[0], coord[1], alt],
+      );
+    }
+    trimmedFeatures.push(trimmed);
+    originalLineIndices.push(i);
+  });
+
+  return initEditStatesFromTrimResult(
+    lines,
+    trimmedFeatures,
+    originalLineIndices,
+    altitudes,
+  );
+}
+
+export { buildCsvFromFeatures };

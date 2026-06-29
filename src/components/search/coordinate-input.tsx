@@ -14,14 +14,18 @@ interface CoordinateInputProps {
   onKmlFileChange?: (fileName: string | null) => void;
 }
 
-export function CoordinateInput({ coordinates, onChange, onKmlFileChange }: CoordinateInputProps) {
+export function CoordinateInput({
+  coordinates,
+  onChange,
+  onKmlFileChange,
+}: CoordinateInputProps) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [kmlOpen, setKmlOpen] = useState(false);
 
   const handleFieldChange = (
     index: number,
     field: "latitude" | "longitude",
-    value: number
+    value: number,
   ) => {
     const updated = [...coordinates];
     updated[index] = { ...updated[index], [field]: value };
@@ -74,9 +78,9 @@ export function CoordinateInput({ coordinates, onChange, onKmlFileChange }: Coor
       <KmlUploadDialog
         open={kmlOpen}
         onOpenChange={setKmlOpen}
-        onApply={(coords, fileName) => {
-          onChange(coords);
-          onKmlFileChange?.(fileName ?? null);
+        onApply={(items) => {
+          if (items[0]) onChange(items[0].coordinates);
+          onKmlFileChange?.(null);
         }}
       />
     </div>

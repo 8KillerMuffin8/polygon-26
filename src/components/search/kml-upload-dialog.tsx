@@ -19,66 +19,19 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import type { Coordinate } from "@/types";
+import {
+  closePolygon,
+  isPolygonClosed,
+  parseKmlPolygons,
+  type KmlPolygonImport,
+} from "@/lib/geo/parse-kml";
 
-interface KmlPolygon {
-  name: string;
-  coordinates: Coordinate[];
-}
+export type { KmlPolygonImport };
 
 interface KmlUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApply: (coords: Coordinate[], fileName?: string) => void;
-}
-
-function parseKmlCoordinates(text: string): Coordinate[] {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter((s) => s.length > 0)
-    .map((entry) => {
-      const [lng, lat] = entry.split(",").map(Number);
-      return { latitude: lat, longitude: lng };
-    });
-}
-
-function isPolygonClosed(coords: Coordinate[]): boolean {
-  if (coords.length < 2) return false;
-  const first = coords[0];
-  const last = coords[coords.length - 1];
-  return first.latitude === last.latitude && first.longitude === last.longitude;
-}
-
-function parseKml(xmlText: string): KmlPolygon[] {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, "text/xml");
-
-  const parseError = doc.querySelector("parsererror");
-  if (parseError) {
-    throw new Error("Invalid KML file");
-  }
-
-  const placemarks = doc.getElementsByTagName("Placemark");
-  const polygons: KmlPolygon[] = [];
-
-  for (let i = 0; i < placemarks.length; i++) {
-    const pm = placemarks[i];
-    const coordsEl = pm.getElementsByTagName("coordinates")[0];
-    if (!coordsEl?.textContent) continue;
-
-    const descEl = pm.getElementsByTagName("description")[0];
-    const nameEl = pm.getElementsByTagName("name")[0];
-    const label =
-      nameEl?.textContent || descEl?.textContent || `Polygon ${i + 1}`;
-
-    const coordinates = parseKmlCoordinates(coordsEl.textContent);
-    if (coordinates.length >= 3) {
-      polygons.push({ name: label, coordinates });
-    }
-  }
-
-  return polygons;
+  onApply: (polygons: KmlPolygonImport[]) => void;
 }
 
 export function KmlUploadDialog({
@@ -86,28 +39,29 @@ export function KmlUploadDialog({
   onOpenChange,
   onApply,
 }: KmlUploadDialogProps) {
-  const [polygons, setPolygons] = useState<KmlPolygon[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [unclosedCoords, setUnclosedCoords] = useState<Coordinate[] | null>(null);
-  const fileNameRef = useRef("");
+  const [unclosedPolygon, setUnclosedPolygon] =
+    useState<KmlPolygonImport | null>(null);
+  const [pendingPolygons, setPendingPolygons] = useState<
+    KmlPolygonImport[] | null
+  >(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reset = () => {
-    setPolygons([]);
-    setSelected(null);
     setError("");
-    setUnclosedCoords(null);
-    fileNameRef.current = "";
+    setUnclosedPolygon(null);
+    setPendingPolygons(null);
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  const applyCoords = (coords: Coordinate[]) => {
-    if (!isPolygonClosed(coords)) {
-      setUnclosedCoords(coords);
+  const applyPolygons = (items: KmlPolygonImport[]) => {
+    const unclosed = items.find((p) => !isPolygonClosed(p.coordinates));
+    if (unclosed) {
+      setUnclosedPolygon(unclosed);
+      setPendingPolygons(items);
       return;
     }
-    onApply(coords, fileNameRef.current);
+    onApply(items);
     onOpenChange(false);
     reset();
   };
@@ -116,33 +70,21 @@ export function KmlUploadDialog({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    fileNameRef.current = file.name;
     setError("");
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = parseKml(reader.result as string);
+        const parsed = parseKmlPolygons(reader.result as string);
         if (parsed.length === 0) {
           setError("No polygons found in KML file");
           return;
         }
-        if (parsed.length === 1) {
-          applyCoords(parsed[0].coordinates);
-          return;
-        }
-        setPolygons(parsed);
-        setSelected(0);
+        applyPolygons(parsed);
       } catch {
         setError("Failed to parse KML file");
       }
     };
     reader.readAsText(file);
-  };
-
-  const handleApply = () => {
-    if (selected !== null && polygons[selected]) {
-      applyCoords(polygons[selected].coordinates);
-    }
   };
 
   const handleClose = (open: boolean) => {
@@ -157,6 +99,10 @@ export function KmlUploadDialog({
           <DialogTitle>Import KML File</DialogTitle>
         </DialogHeader>
 
+        <p className="text-sm text-muted-foreground">
+          All polygons in the file will be imported.
+        </p>
+
         <input
           ref={fileRef}
           type="file"
@@ -167,58 +113,29 @@ export function KmlUploadDialog({
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {polygons.length > 1 && (
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">
-              Found {polygons.length} polygons. Select one:
-            </p>
-            <div className="max-h-48 overflow-y-auto space-y-1">
-              {polygons.map((p, i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelected(i)}
-                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                    selected === i
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted hover:bg-muted/80"
-                  }`}
-                >
-                  <span className="font-medium">{p.name}</span>
-                  <span className="text-xs opacity-75 ml-2">
-                    ({p.coordinates.length} points)
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         <DialogFooter>
           <Button variant="outline" onClick={() => handleClose(false)}>
             Cancel
           </Button>
-          {polygons.length > 1 && (
-            <Button onClick={handleApply} disabled={selected === null}>
-              Apply
-            </Button>
-          )}
         </DialogFooter>
       </DialogContent>
 
       <AlertDialog
-        open={unclosedCoords !== null}
+        open={unclosedPolygon !== null}
         onOpenChange={(open) => {
-          if (!open) setUnclosedCoords(null);
+          if (!open) {
+            setUnclosedPolygon(null);
+            setPendingPolygons(null);
+          }
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Polygon is not closed</AlertDialogTitle>
             <AlertDialogDescription>
-              The first and last coordinates of this polygon are different. A
-              closed polygon requires the first and last points to be identical.
-              Would you like to automatically close it by adding the first
-              coordinate as the last point?
+              &ldquo;{unclosedPolygon?.name}&rdquo; is not closed. Would you
+              like to automatically close it by adding the first coordinate as
+              the last point?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -226,8 +143,8 @@ export function KmlUploadDialog({
             <AlertDialogAction
               variant="outline"
               onClick={() => {
-                if (unclosedCoords) {
-                  onApply(unclosedCoords, fileNameRef.current);
+                if (pendingPolygons) {
+                  onApply(pendingPolygons);
                   onOpenChange(false);
                   reset();
                 }
@@ -237,14 +154,19 @@ export function KmlUploadDialog({
             </AlertDialogAction>
             <AlertDialogAction
               onClick={() => {
-                if (unclosedCoords) {
-                  onApply([...unclosedCoords, unclosedCoords[0]], fileNameRef.current);
+                if (pendingPolygons) {
+                  onApply(
+                    pendingPolygons.map((p) => ({
+                      ...p,
+                      coordinates: closePolygon(p.coordinates),
+                    })),
+                  );
                   onOpenChange(false);
                   reset();
                 }
               }}
             >
-              Close polygon automatically
+              Close automatically
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

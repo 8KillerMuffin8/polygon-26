@@ -1,0 +1,233 @@
+"use client";
+
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { cn } from "@/lib/utils";
+
+interface MapResizeContainerProps {
+  children: ReactNode;
+  className?: string;
+  minWidth?: number;
+  maxWidth?: number;
+  defaultHeight?: number;
+  minHeight?: number;
+  maxHeight?: number;
+  onResize?: () => void;
+}
+
+function HorizontalResizeHandle({
+  side,
+  onPointerDown,
+}: {
+  side: "left" | "right";
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize map from ${side}`}
+      onPointerDown={onPointerDown}
+      className={cn(
+        "absolute top-0 z-20 flex h-full w-3 touch-none items-center justify-center",
+        "cursor-ew-resize group",
+        side === "left" ? "-left-1.5" : "-right-1.5",
+      )}
+    >
+      <div
+        className={cn(
+          "h-12 w-1 rounded-full bg-border transition-colors",
+          "group-hover:bg-primary/60 group-active:bg-primary",
+        )}
+      />
+    </div>
+  );
+}
+
+function BottomResizeHandle({
+  onPointerDown,
+}: {
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+}) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize map from bottom"
+      onPointerDown={onPointerDown}
+      className={cn(
+        "absolute -bottom-1.5 left-0 z-20 flex h-3 w-full touch-none items-center justify-center",
+        "cursor-ns-resize group",
+      )}
+    >
+      <div
+        className={cn(
+          "h-1 w-12 rounded-full bg-border transition-colors",
+          "group-hover:bg-primary/60 group-active:bg-primary",
+        )}
+      />
+    </div>
+  );
+}
+
+function getViewportHeight() {
+  return document.documentElement.clientHeight;
+}
+
+export function MapResizeContainer({
+  children,
+  className,
+  minWidth = 320,
+  maxWidth,
+  defaultHeight = 500,
+  minHeight = 240,
+  maxHeight,
+  onResize,
+}: MapResizeContainerProps) {
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [customWidth, setCustomWidth] = useState<number | null>(null);
+  const [height, setHeight] = useState(defaultHeight);
+  const onResizeRef = useRef(onResize);
+  onResizeRef.current = onResize;
+
+  const getContainerWidth = useCallback(() => {
+    return measureRef.current?.clientWidth ?? 0;
+  }, []);
+
+  const getMaxWidth = useCallback(() => {
+    const container = getContainerWidth();
+    if (maxWidth !== undefined) {
+      return container > 0 ? Math.min(maxWidth, container) : maxWidth;
+    }
+    return container || window.innerWidth;
+  }, [maxWidth, getContainerWidth]);
+
+  const getMaxHeight = useCallback(() => {
+    if (maxHeight !== undefined) return maxHeight;
+    return getViewportHeight();
+  }, [maxHeight]);
+
+  const notifyResize = useCallback(() => {
+    requestAnimationFrame(() => onResizeRef.current?.());
+  }, []);
+
+  useEffect(() => {
+    notifyResize();
+  }, [customWidth, height, notifyResize]);
+
+  useEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+
+    const observer = new ResizeObserver(() => {
+      notifyResize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [notifyResize]);
+
+  const startHorizontalDrag = useCallback(
+    (side: "left" | "right") => (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+
+      const containerWidth = getContainerWidth();
+      const startWidth = customWidth ?? containerWidth;
+      if (startWidth <= 0) return;
+
+      const startX = e.clientX;
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (ev: PointerEvent) => {
+        const limit = getMaxWidth();
+        const delta =
+          side === "right" ? ev.clientX - startX : startX - ev.clientX;
+        const newWidth = Math.min(
+          limit,
+          Math.max(minWidth, startWidth + 2 * delta),
+        );
+        setCustomWidth(newWidth);
+        notifyResize();
+      };
+
+      const onPointerUp = () => {
+        target.releasePointerCapture(e.pointerId);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        notifyResize();
+      };
+
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+    },
+    [customWidth, minWidth, getMaxWidth, getContainerWidth, notifyResize],
+  );
+
+  const startBottomDrag = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+
+      const startY = e.clientY;
+      const startHeight = height;
+      const target = e.currentTarget;
+      target.setPointerCapture(e.pointerId);
+
+      const onPointerMove = (ev: PointerEvent) => {
+        const limit = getMaxHeight();
+        const delta = ev.clientY - startY;
+        const newHeight = Math.min(
+          limit,
+          Math.max(minHeight, startHeight + delta),
+        );
+        setHeight(newHeight);
+        notifyResize();
+      };
+
+      const onPointerUp = () => {
+        target.releasePointerCapture(e.pointerId);
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        notifyResize();
+      };
+
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+    },
+    [height, minHeight, getMaxHeight, notifyResize],
+  );
+
+  return (
+    <div className="relative w-full">
+      <div
+        ref={measureRef}
+        aria-hidden
+        className="pointer-events-none invisible h-0 w-full overflow-hidden"
+      />
+      <div className="flex w-full justify-center">
+        <div
+          className={cn("relative max-w-full", className)}
+          style={{
+            width: customWidth ?? "100%",
+            height,
+          }}
+        >
+          <HorizontalResizeHandle
+            side="left"
+            onPointerDown={startHorizontalDrag("left")}
+          />
+          <HorizontalResizeHandle
+            side="right"
+            onPointerDown={startHorizontalDrag("right")}
+          />
+          <BottomResizeHandle onPointerDown={startBottomDrag} />
+          <div className="h-full w-full">{children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}

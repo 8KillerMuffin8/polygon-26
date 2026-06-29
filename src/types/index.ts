@@ -13,6 +13,7 @@ export type ImageRecord = {
   SourceFile: string;
   GPSLatitude: number;
   GPSLongitude: number;
+  GPSAltitude: number;
   Datetimeoriginal: string;
   target: string;
   IMURoll: number;
@@ -26,4 +27,12 @@ export type SearchResult = {
   success: boolean;
   data: ImageRecord[];
   error?: string;
+};
+
+export type SearchPolygon = {
+  id: string;
+  name: string;
+  color: string;
+  coordinates: Coordinate[];
+  results: ImageRecord[];
 };
