@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition, useMemo } from "react";
+import { useState, useTransition, useMemo, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +82,8 @@ export function ResultsView({
     data: ImageRecord[];
     filename: string;
   } | null>(null);
+  const resultsSectionRef = useRef<HTMLDivElement>(null);
+  const wasSearchingRef = useRef(false);
 
   const allResults = useMemo(
     () => polygons.flatMap((p) => p.results),
@@ -121,6 +123,20 @@ export function ResultsView({
     );
     return valid.length >= 3;
   });
+
+  useEffect(() => {
+    const searchJustFinished = wasSearchingRef.current && !isSearching;
+    wasSearchingRef.current = isSearching;
+
+    if (searchJustFinished && totalRaw > 0) {
+      requestAnimationFrame(() => {
+        resultsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  }, [isSearching, totalRaw]);
 
   const toggleCollapsed = (id: string) => {
     setCollapsed((prev) => {
@@ -168,107 +184,104 @@ export function ResultsView({
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          {totalRaw > 0 && (
-            <p className="text-xl font-semibold text-foreground">
-              {totalFiltered.toLocaleString()} result
-              {totalFiltered !== 1 ? "s" : ""} found
-              {polygons.filter((p) => p.results.length > 0).length > 1 &&
-                ` across ${polygons.filter((p) => p.results.length > 0).length} polygons`}
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            onClick={onSearch}
-            disabled={isSearching || !hasSearchablePolygons}
-            size="sm"
-          >
-            {isSearching ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Searching...
-              </>
-            ) : (
-              <>
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </>
-            )}
-          </Button>
-          {totalRaw > 0 && (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-card px-3 py-2 text-sm">
+        <Button
+          onClick={onSearch}
+          disabled={isSearching || !hasSearchablePolygons}
+          size="sm"
+        >
+          {isSearching ? (
             <>
-              {!isGuest && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={isSaving || totalFiltered === 0}
-                >
-                  {isSaving ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4 mr-2" />
-                  )}
-                  Save to DB
-                </Button>
-              )}
-              <Button variant="outline" size="sm" onClick={handleClearResults}>
-                <Trash2 className="h-4 w-4 mr-2" />
-                Clear results
-              </Button>
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              Searching...
+            </>
+          ) : (
+            <>
+              <Search className="h-3.5 w-3.5 mr-1.5" />
+              Search
             </>
           )}
-        </div>
-      </div>
+        </Button>
 
-      {totalRaw > 0 && (
-        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-card p-3">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">Resolution</label>
+        {totalRaw > 0 && (
+          <>
+            <span className="text-xs text-muted-foreground">
+              {totalFiltered.toLocaleString()} result
+              {totalFiltered !== 1 ? "s" : ""}
+              {hasFilters && ` (${totalRaw} total)`}
+            </span>
+
             <select
               value={resolution}
               onChange={(e) => setResolution(e.target.value)}
-              className="h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              title="Resolution"
+              className="h-7 rounded-md border border-input bg-transparent px-2 text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 dark:bg-input/30"
             >
-              <option value="">All</option>
+              <option value="">All resolutions</option>
               {resolutionOptions.map((r) => (
                 <option key={r} value={r}>
                   {r}
                 </option>
               ))}
             </select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">Start date</label>
+
             <Input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="w-[150px]"
+              title="Start date"
+              className="h-7 w-[130px] text-xs"
             />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-muted-foreground">End date</label>
             <Input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="w-[150px]"
+              title="End date"
+              className="h-7 w-[130px] text-xs"
             />
-          </div>
-          {hasFilters && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          )}
-          <p className="text-xs text-muted-foreground ml-auto pb-1">
-            {totalFiltered} of {totalRaw} shown
-          </p>
-        </div>
-      )}
+
+            {hasFilters && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </Button>
+            )}
+
+            <div className="flex items-center gap-1.5 ml-auto shrink-0">
+              {!isGuest && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7"
+                  onClick={handleSave}
+                  disabled={isSaving || totalFiltered === 0}
+                >
+                  {isSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5 mr-1" />
+                  )}
+                  Save
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={handleClearResults}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                Clear
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
 
       <SearchMap
         polygons={polygons}
@@ -278,7 +291,7 @@ export function ResultsView({
       />
 
       {filteredByPolygon.some((g) => g.results.length > 0) && (
-        <div className="space-y-2">
+        <div ref={resultsSectionRef} className="scroll-mt-16 space-y-1.5">
           {filteredByPolygon
             .filter((g) => g.results.length > 0)
             .map(({ polygon, results }) => {
@@ -288,7 +301,7 @@ export function ResultsView({
                   key={polygon.id}
                   className="rounded-md border bg-card overflow-hidden"
                 >
-                  <div className="flex items-center gap-2 px-4 py-3 hover:bg-muted/50">
+                  <div className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50">
                     <button
                       type="button"
                       className="flex flex-1 min-w-0 items-center gap-2 text-left"
@@ -324,7 +337,7 @@ export function ResultsView({
                     )}
                   </div>
                   {!isCollapsed && (
-                    <div className="border-t px-4 py-2 max-h-48 overflow-y-auto">
+                    <div className="border-t px-3 py-1.5 max-h-36 overflow-y-auto">
                       <ul className="text-sm space-y-1">
                         {results.map((r) => (
                           <li

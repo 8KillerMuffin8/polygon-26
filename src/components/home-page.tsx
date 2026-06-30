@@ -75,27 +75,24 @@ export function HomePage({ isGuest }: HomePageProps) {
   };
 
   return (
-    <main className="flex-1 flex flex-col items-center p-6 pt-12 relative">
-      <AppToolbar isGuest={isGuest} />
-      <div className="w-full max-w-5xl space-y-6">
-        <div className="text-center space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">Polygon Search</h1>
-          <p className="text-muted-foreground">
-            Draw polygons on the map or import KML to search aerial imagery
-          </p>
-          {!isGuest && (
+    <main className="flex min-h-0 flex-1 flex-col">
+      <AppToolbar
+        title="Polygon Search"
+        subtitle="Draw or import KML to search imagery"
+        isGuest={isGuest}
+        actions={
+          !isGuest ? (
             <Link
               href="/line-trimmer"
-              className="inline-flex items-center gap-1.5 mt-3 rounded-md border border-input bg-secondary px-3 py-1.5 text-sm font-medium text-secondary-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
             >
-              <Scissors className="h-4 w-4" />
-              Line Trimmer Tool
+              <Scissors className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Line Trimmer</span>
             </Link>
-          )}
-        </div>
-      </div>
-
-      <div className="w-full mt-6">
+          ) : undefined
+        }
+      />
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
         <ResultsView
           polygons={polygons}
           onPolygonsChange={setPolygons}

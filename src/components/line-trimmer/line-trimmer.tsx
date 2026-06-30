@@ -1,16 +1,10 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import dynamic from "next/dynamic";
 import * as tj from "@mapbox/togeojson";
 import tokml from "tokml";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -34,7 +28,6 @@ import {
 } from "@/lib/geo/line-path";
 import { toast } from "sonner";
 import {
-  Upload,
   Scissors,
   Download,
   FileDown,
@@ -78,6 +71,9 @@ function clearResultsState(
   setSelectedLineIndex(null);
 }
 
+const FILE_INPUT_CLASS =
+  "w-44 max-w-full shrink-0 text-xs text-muted-foreground file:mr-2 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 file:cursor-pointer";
+
 export function LineTrimmer() {
   const [polyGeoJson, setPolyGeoJson] =
     useState<GeoJSON.FeatureCollection | null>(null);
@@ -101,6 +97,8 @@ export function LineTrimmer() {
   const polyInputRef = useRef<HTMLInputElement>(null);
   const linesInputRef = useRef<HTMLInputElement>(null);
   const altInputRef = useRef<HTMLInputElement>(null);
+  const resultsSectionRef = useRef<HTMLDivElement>(null);
+  const wasProcessingRef = useRef(false);
 
   const { trimmedLines, csvData } = useMemo(
     () =>
@@ -306,8 +304,22 @@ export function LineTrimmer() {
   const canProcess = polyGeoJson !== null && linesGeoJson !== null;
   const hasResults = trimmedLines.length > 0;
 
+  useEffect(() => {
+    const trimJustFinished = wasProcessingRef.current && !isProcessing;
+    wasProcessingRef.current = isProcessing;
+
+    if (trimJustFinished && trimmedLines.length > 0) {
+      requestAnimationFrame(() => {
+        resultsSectionRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    }
+  }, [isProcessing, trimmedLines.length]);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       <AlertDialog open={retrimDialogOpen} onOpenChange={setRetrimDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -326,249 +338,210 @@ export function LineTrimmer() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Upload & Controls */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Polygon KML
-            </CardTitle>
-            <CardDescription>
-              The boundary polygon to trim lines against
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <input
-              ref={polyInputRef}
-              type="file"
-              accept=".kml"
-              onChange={handlePolyUpload}
-              className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 file:cursor-pointer"
-            />
-            {polyFileName && (
-              <p className="mt-2 text-xs text-muted-foreground truncate">
-                {polyFileName}
-              </p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 text-sm">
+        <label className="flex items-center gap-2">
+          <span className="shrink-0 text-xs text-muted-foreground">
+            Polygon
+          </span>
+          <input
+            ref={polyInputRef}
+            type="file"
+            accept=".kml"
+            onChange={handlePolyUpload}
+            className={FILE_INPUT_CLASS}
+          />
+          {polyFileName && (
+            <span className="text-xs text-muted-foreground">
+              {polyFileName}
+            </span>
+          )}
+        </label>
+
+        <label className="flex items-center gap-2">
+          <span className="shrink-0 text-xs text-muted-foreground">Lines</span>
+          <input
+            ref={linesInputRef}
+            type="file"
+            accept=".kml"
+            onChange={handleLinesUpload}
+            className={FILE_INPUT_CLASS}
+          />
+          {linesFileName && (
+            <span className="text-xs text-muted-foreground">
+              {linesFileName}
+              {originalLines.length > 0 && ` (${originalLines.length})`}
+            </span>
+          )}
+        </label>
+
+        <label className="flex items-center gap-2">
+          <span className="shrink-0 text-xs text-muted-foreground">Alt</span>
+          <input
+            ref={altInputRef}
+            type="file"
+            accept=".jsn,.json"
+            onChange={handleAltUpload}
+            className={FILE_INPUT_CLASS}
+          />
+          {altFileName && (
+            <span className="text-xs text-muted-foreground">
+              {altitudes?.length ?? 0} legs
+            </span>
+          )}
+        </label>
+
+        <label className="flex shrink-0 cursor-pointer items-center gap-1.5">
+          <Checkbox
+            checked={keepExternal}
+            onCheckedChange={(checked) => setKeepExternal(checked === true)}
+          />
+          <span className="text-xs whitespace-nowrap">Keep outside</span>
+        </label>
+
+        <div className="flex gap-1.5 ml-auto shrink-0">
+          <Button
+            onClick={handleProcess}
+            disabled={!canProcess || isProcessing}
+            size="sm"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Scissors className="h-3.5 w-3.5 mr-1.5" />
+                Trim Lines
+              </>
             )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Lines KML
-            </CardTitle>
-            <CardDescription>
-              The flight lines to trim to the polygon
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <input
-              ref={linesInputRef}
-              type="file"
-              accept=".kml"
-              onChange={handleLinesUpload}
-              className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 file:cursor-pointer"
-            />
-            {linesFileName && (
-              <p className="mt-2 text-xs text-muted-foreground truncate">
-                {linesFileName} — {originalLines.length} lines
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-4 w-4" />
-              Altitude File
-            </CardTitle>
-            <CardDescription>
-              Optional .jsn file with per-leg altitudes
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <input
-              ref={altInputRef}
-              type="file"
-              accept=".jsn,.json"
-              onChange={handleAltUpload}
-              className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-primary file:text-primary-foreground hover:file:bg-primary/90 file:cursor-pointer"
-            />
-            {altFileName && (
-              <p className="mt-2 text-xs text-muted-foreground truncate">
-                {altFileName} — {altitudes?.length ?? 0} legs
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Scissors className="h-4 w-4" />
-              Options
-            </CardTitle>
-            <CardDescription>Configure and run the trimmer</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <Checkbox
-                checked={keepExternal}
-                onCheckedChange={(checked) => setKeepExternal(checked === true)}
-              />
-              Keep lines outside polygon
-            </label>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={handleProcess}
-                disabled={!canProcess || isProcessing}
-                className="flex-1"
-              >
-                {isProcessing ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Scissors className="h-4 w-4 mr-2" />
-                    Trim Lines
-                  </>
-                )}
-              </Button>
-              <Button variant="outline" onClick={handleReset}>
-                <RotateCcw className="h-4 w-4" />
-                Clear
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleReset}>
+            <RotateCcw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
-      {hasResults && (
-        <div className="flex flex-wrap items-center gap-3 rounded-md border bg-card p-3">
-          <p className="text-sm text-muted-foreground">
-            {trimmedLines.length} trimmed line
-            {trimmedLines.length !== 1 ? "s" : ""}
-            {originalLines.length > 0 && (
-              <span> (from {originalLines.length} original)</span>
-            )}
-            {selectedLineIndex !== null && (
-              <span className="ml-2 font-medium text-foreground">
-                — Line {selectedLineIndex + 1} selected
-              </span>
-            )}
-          </p>
-          {selectedLineIndex !== null && (
-            <Button variant="outline" size="sm" onClick={handleResetLine}>
-              <Undo2 className="h-4 w-4 mr-1" />
-              Reset to auto-trim
-            </Button>
-          )}
-          <div className="ml-auto flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleExportCsv}>
-              <FileText className="h-4 w-4 mr-1" />
-              Export CSV
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExportKml}>
-              <FileDown className="h-4 w-4 mr-1" />
-              Export KML
-            </Button>
-          </div>
-        </div>
-      )}
+      <div className="space-y-3">
+        <TrimmerMap
+          polyGeoJson={polyGeoJson}
+          originalLines={originalLines}
+          trimmedLines={trimmedLines}
+          lineEdits={lineEdits}
+          selectedLineIndex={selectedLineIndex}
+          onSelectLine={setSelectedLineIndex}
+          onLineEdit={handleLineEdit}
+        />
+      </div>
 
       {(originalLines.length > 0 || hasResults) && (
-        <div className="space-y-1">
-          <div className="flex gap-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-4 h-0.5 bg-blue-500 rounded" />
+            Polygon
+          </span>
+          {originalLines.length > 0 && (
             <span className="flex items-center gap-1.5">
-              <span className="inline-block w-5 h-0.5 bg-blue-500 rounded" />
-              Polygon boundary
+              <span
+                className="inline-block w-4 h-0.5 bg-gray-400"
+                style={{ borderTop: "1.5px dashed rgb(156 163 175)" }}
+              />
+              Original
             </span>
-            {originalLines.length > 0 && (
-              <span className="flex items-center gap-1.5">
-                <span
-                  className="inline-block w-5 h-0.5 bg-gray-400 rounded border-dashed"
-                  style={{ borderTop: "1.5px dashed rgb(156 163 175)" }}
-                />
-                Original lines
-              </span>
-            )}
-            {hasResults && (
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-5 h-0.5 bg-green-500 rounded" />
-                Trimmed lines
-              </span>
-            )}
-          </div>
+          )}
           {hasResults && (
-            <p className="text-xs text-muted-foreground">
-              Click a trimmed line to adjust its endpoints along the original
-              path.
-            </p>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-4 h-0.5 bg-green-500 rounded" />
+              Trimmed
+            </span>
+          )}
+          {hasResults && (
+            <span className="text-muted-foreground/80">
+              · Click a trimmed line to adjust endpoints
+            </span>
           )}
         </div>
       )}
 
-      <TrimmerMap
-        polyGeoJson={polyGeoJson}
-        originalLines={originalLines}
-        trimmedLines={trimmedLines}
-        lineEdits={lineEdits}
-        selectedLineIndex={selectedLineIndex}
-        onSelectLine={setSelectedLineIndex}
-        onLineEdit={handleLineEdit}
-      />
-
-      {csvData && csvData.length > 1 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              CSV Preview
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto max-h-[300px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card">
-                  <tr>
-                    {csvData[0].map((header, i) => (
-                      <th
-                        key={i}
-                        className="text-left px-3 py-2 font-medium text-muted-foreground border-b"
-                      >
-                        {header}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvData.slice(1).map((row, ri) => (
-                    <tr
-                      key={ri}
-                      className={`border-b border-border/50 cursor-pointer hover:bg-muted/50 ${
-                        selectedLineIndex === ri ? "bg-muted" : ""
-                      }`}
-                      onClick={() => setSelectedLineIndex(ri)}
-                    >
-                      {row.map((cell, ci) => (
-                        <td key={ci} className="px-3 py-1.5 tabular-nums">
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      {hasResults && (
+        <div ref={resultsSectionRef} className="scroll-mt-16 space-y-2">
+          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-1.5 text-sm">
+            <p className="text-xs text-muted-foreground">
+              {trimmedLines.length} trimmed line
+              {trimmedLines.length !== 1 ? "s" : ""}
+              {originalLines.length > 0 && (
+                <span> (from {originalLines.length})</span>
+              )}
+              {selectedLineIndex !== null && (
+                <span className="ml-1 font-medium text-foreground">
+                  · Line {selectedLineIndex + 1} selected
+                </span>
+              )}
+            </p>
+            {selectedLineIndex !== null && (
+              <Button variant="outline" size="sm" onClick={handleResetLine}>
+                <Undo2 className="h-3.5 w-3.5 mr-1" />
+                Reset
+              </Button>
+            )}
+            <div className="ml-auto flex gap-1.5">
+              <Button variant="outline" size="sm" onClick={handleExportCsv}>
+                <FileText className="h-3.5 w-3.5 mr-1" />
+                CSV
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleExportKml}>
+                <FileDown className="h-3.5 w-3.5 mr-1" />
+                KML
+              </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+
+          {csvData && csvData.length > 1 && (
+            <Card>
+              <CardHeader className="py-3 px-4">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Download className="h-3.5 w-3.5" />
+                  CSV Preview
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4 pt-0">
+                <div className="overflow-x-auto max-h-[200px] overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-card">
+                      <tr>
+                        {csvData[0].map((header, i) => (
+                          <th
+                            key={i}
+                            className="text-left px-3 py-2 font-medium text-muted-foreground border-b"
+                          >
+                            {header}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {csvData.slice(1).map((row, ri) => (
+                        <tr
+                          key={ri}
+                          className={`border-b border-border/50 cursor-pointer hover:bg-muted/50 ${
+                            selectedLineIndex === ri ? "bg-muted" : ""
+                          }`}
+                          onClick={() => setSelectedLineIndex(ri)}
+                        >
+                          {row.map((cell, ci) => (
+                            <td key={ci} className="px-3 py-1.5 tabular-nums">
+                              {cell}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
     </div>
   );

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -17,6 +18,10 @@ interface MapResizeContainerProps {
   defaultHeight?: number;
   minHeight?: number;
   maxHeight?: number;
+  /** When true, initial height fills the viewport below the map. Default true. */
+  fillViewport?: boolean;
+  /** Space to leave below the map when fillViewport is enabled (px). */
+  bottomGutter?: number;
   onResize?: () => void;
 }
 
@@ -79,21 +84,64 @@ function getViewportHeight() {
   return document.documentElement.clientHeight;
 }
 
+export const MAP_RESIZE_DEFAULTS = {
+  minWidth: 320,
+  defaultHeight: 500,
+  minHeight: 240,
+  fillViewport: true,
+  bottomGutter: 32,
+} as const;
+
+function fillViewportHeight(
+  containerTop: number,
+  bottomGutter: number,
+  minHeight: number,
+): number {
+  const available = window.innerHeight - containerTop - bottomGutter;
+  return Math.max(minHeight, available);
+}
+
 export function MapResizeContainer({
   children,
   className,
-  minWidth = 320,
+  minWidth = MAP_RESIZE_DEFAULTS.minWidth,
   maxWidth,
-  defaultHeight = 500,
-  minHeight = 240,
+  defaultHeight = MAP_RESIZE_DEFAULTS.defaultHeight,
+  minHeight = MAP_RESIZE_DEFAULTS.minHeight,
   maxHeight,
+  fillViewport = MAP_RESIZE_DEFAULTS.fillViewport,
+  bottomGutter = MAP_RESIZE_DEFAULTS.bottomGutter,
   onResize,
 }: MapResizeContainerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
+  const heightLockedRef = useRef(false);
   const [customWidth, setCustomWidth] = useState<number | null>(null);
   const [height, setHeight] = useState(defaultHeight);
   const onResizeRef = useRef(onResize);
-  onResizeRef.current = onResize;
+
+  useEffect(() => {
+    onResizeRef.current = onResize;
+  });
+
+  const syncViewportHeight = useCallback(() => {
+    if (!fillViewport || heightLockedRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+    setHeight(
+      fillViewportHeight(
+        el.getBoundingClientRect().top,
+        bottomGutter,
+        minHeight,
+      ),
+    );
+  }, [fillViewport, bottomGutter, minHeight]);
+
+  useLayoutEffect(() => {
+    syncViewportHeight();
+    window.addEventListener("resize", syncViewportHeight);
+    return () => window.removeEventListener("resize", syncViewportHeight);
+  }, [syncViewportHeight]);
 
   const getContainerWidth = useCallback(() => {
     return measureRef.current?.clientWidth ?? 0;
@@ -109,8 +157,16 @@ export function MapResizeContainer({
 
   const getMaxHeight = useCallback(() => {
     if (maxHeight !== undefined) return maxHeight;
+    const el = containerRef.current;
+    if (el && fillViewport) {
+      return fillViewportHeight(
+        el.getBoundingClientRect().top,
+        bottomGutter,
+        minHeight,
+      );
+    }
     return getViewportHeight();
-  }, [maxHeight]);
+  }, [maxHeight, fillViewport, bottomGutter, minHeight]);
 
   const notifyResize = useCallback(() => {
     requestAnimationFrame(() => onResizeRef.current?.());
@@ -171,17 +227,18 @@ export function MapResizeContainer({
   const startBottomDrag = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
+      heightLockedRef.current = true;
 
       const startY = e.clientY;
       const startHeight = height;
+      const maxHeightAtStart = getMaxHeight();
       const target = e.currentTarget;
       target.setPointerCapture(e.pointerId);
 
       const onPointerMove = (ev: PointerEvent) => {
-        const limit = getMaxHeight();
         const delta = ev.clientY - startY;
         const newHeight = Math.min(
-          limit,
+          maxHeightAtStart,
           Math.max(minHeight, startHeight + delta),
         );
         setHeight(newHeight);
@@ -202,7 +259,7 @@ export function MapResizeContainer({
   );
 
   return (
-    <div className="relative w-full">
+    <div ref={containerRef} className="relative w-full">
       <div
         ref={measureRef}
         aria-hidden

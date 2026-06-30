@@ -20,6 +20,7 @@ import Polygon from "ol/geom/Polygon";
 import Overlay from "ol/Overlay";
 import Draw from "ol/interaction/Draw";
 import { fromLonLat, toLonLat } from "ol/proj";
+import { createEmpty, extend } from "ol/extent";
 import { getArea } from "ol/sphere";
 import { Style, Fill, Stroke, Circle as CircleStyle } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
@@ -29,7 +30,10 @@ import { ExportDialog } from "@/components/results/export-dialog";
 import { formatDate } from "@/utils/format-date";
 import { Download, X, Pencil, MapPin, Trash2, Upload } from "lucide-react";
 import { MeasureTool } from "@/components/map/measure-tool";
-import { MapResizeContainer } from "@/components/map/map-resize-container";
+import {
+  MapResizeContainer,
+  MAP_RESIZE_DEFAULTS,
+} from "@/components/map/map-resize-container";
 import { PolygonLegend } from "@/components/map/polygon-legend";
 import { KmlUploadDialog } from "@/components/search/kml-upload-dialog";
 import {
@@ -91,6 +95,30 @@ function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function centerOfMass(polygons: SearchPolygon[]): [number, number] | null {
+  let sumLat = 0;
+  let sumLon = 0;
+  let count = 0;
+
+  for (const polygon of polygons) {
+    for (const coord of polygon.coordinates) {
+      if (coord.latitude === 0 && coord.longitude === 0) continue;
+      sumLat += coord.latitude;
+      sumLon += coord.longitude;
+      count++;
+    }
+  }
+
+  if (count === 0) return null;
+  return [sumLon / count, sumLat / count];
+}
+
+const MAP_FIT_OPTIONS = {
+  padding: [50, 50, 50, 50] as [number, number, number, number],
+  maxZoom: 18,
+  duration: 500,
+};
+
 export function SearchMap({
   polygons,
   onPolygonsChange,
@@ -109,6 +137,7 @@ export function SearchMap({
   const overlayRef = useRef<Overlay | null>(null);
   const hoverOverlayRef = useRef<Overlay | null>(null);
   const polygonsRef = useRef(polygons);
+  const pendingFocusIdsRef = useRef<string[] | null>(null);
 
   useEffect(() => {
     polygonsRef.current = polygons;
@@ -170,23 +199,60 @@ export function SearchMap({
     [polygons, onPolygonsChange],
   );
 
-  const zoomToPolygon = useCallback((id: string) => {
+  const focusPolygons = useCallback((ids: string[]) => {
     const map = mapInstance.current;
     const source = polygonSourceRef.current;
-    if (!map || !source) return;
+    if (!map || !source || ids.length === 0) return;
 
-    const feature = source.getFeatures().find((f) => f.get("polygonId") === id);
-    if (!feature) return;
+    const features = source
+      .getFeatures()
+      .filter((f) => ids.includes(f.get("polygonId") as string));
+    if (features.length === 0) return;
 
-    const ext = feature.getGeometry()?.getExtent();
-    if (ext) {
-      map.getView().fit(ext, {
-        padding: [50, 50, 50, 50],
-        maxZoom: 18,
-        duration: 500,
-      });
+    if (ids.length === 1) {
+      const ext = features[0].getGeometry()?.getExtent();
+      if (ext) map.getView().fit(ext, MAP_FIT_OPTIONS);
+      return;
     }
+
+    const extent = createEmpty();
+    for (const feature of features) {
+      const ext = feature.getGeometry()?.getExtent();
+      if (ext) extend(extent, ext);
+    }
+    if (extent[0] === Infinity) return;
+
+    const imported = polygonsRef.current.filter((p) => ids.includes(p.id));
+    const com = centerOfMass(imported);
+    const view = map.getView();
+
+    if (!com) {
+      view.fit(extent, MAP_FIT_OPTIONS);
+      return;
+    }
+
+    view.fit(extent, {
+      padding: MAP_FIT_OPTIONS.padding,
+      maxZoom: MAP_FIT_OPTIONS.maxZoom,
+      duration: 0,
+      callback: () => {
+        const zoom = view.getZoom();
+        if (zoom === undefined) return;
+        view.animate({
+          center: fromLonLat(com),
+          zoom,
+          duration: MAP_FIT_OPTIONS.duration,
+        });
+      },
+    });
   }, []);
+
+  const zoomToPolygon = useCallback(
+    (id: string) => {
+      focusPolygons([id]);
+    },
+    [focusPolygons],
+  );
 
   const startDrawing = () => {
     const map = mapInstance.current;
@@ -256,6 +322,7 @@ export function SearchMap({
       return p;
     });
     onPolygonsChange([...polygons, ...added]);
+    pendingFocusIdsRef.current = added.map((p) => p.id);
     if (added.length === 1) {
       toast.success(`Imported polygon "${added[0].name}"`);
     } else {
@@ -273,7 +340,13 @@ export function SearchMap({
       const feature = buildPolygonFeature(polygon);
       if (feature) source.addFeature(feature);
     }
-  }, [polygons]);
+
+    const focusIds = pendingFocusIdsRef.current;
+    if (focusIds && focusIds.length > 0) {
+      pendingFocusIdsRef.current = null;
+      focusPolygons(focusIds);
+    }
+  }, [polygons, focusPolygons]);
 
   // Update polygon layer style when highlight changes
   useEffect(() => {
@@ -448,8 +521,8 @@ export function SearchMap({
   );
 
   return (
-    <div className="space-y-3">
-      <MapResizeContainer onResize={handleMapResize}>
+    <div className="space-y-2">
+      <MapResizeContainer onResize={handleMapResize} {...MAP_RESIZE_DEFAULTS}>
         <div className="relative h-full">
           <div
             ref={mapRef}

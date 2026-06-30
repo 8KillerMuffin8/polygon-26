@@ -79,18 +79,22 @@ export function LineEditHandles({
     endM: editState.endDistanceM,
   });
 
-  editStateRef.current = editState;
-  originalLineRef.current = originalLine;
-  onEditRef.current = onEdit;
-  lineIndexRef.current = lineIndex;
-  onDraggingChangeRef.current = onDraggingChange;
+  useEffect(() => {
+    editStateRef.current = editState;
+    originalLineRef.current = originalLine;
+    onEditRef.current = onEdit;
+    lineIndexRef.current = lineIndex;
+    onDraggingChangeRef.current = onDraggingChange;
+  });
 
-  if (!isDraggingRef.current) {
-    liveDistancesRef.current = {
-      startM: editState.startDistanceM,
-      endM: editState.endDistanceM,
-    };
-  }
+  useEffect(() => {
+    if (!isDraggingRef.current) {
+      liveDistancesRef.current = {
+        startM: editState.startDistanceM,
+        endM: editState.endDistanceM,
+      };
+    }
+  }, [editState.startDistanceM, editState.endDistanceM]);
 
   useEffect(() => {
     if (!map) return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import Map from "ol/Map";
 import View from "ol/View";
 import TileLayer from "ol/layer/Tile";
@@ -14,6 +14,10 @@ import { fromLonLat } from "ol/proj";
 import { extend, createEmpty } from "ol/extent";
 import { Style, Fill, Stroke } from "ol/style";
 import { MeasureTool } from "@/components/map/measure-tool";
+import {
+  MapResizeContainer,
+  MAP_RESIZE_DEFAULTS,
+} from "@/components/map/map-resize-container";
 import { PolygonArea } from "@/components/map/polygon-area";
 import { LineEditHandles } from "@/components/line-trimmer/line-edit-handles";
 import type { LineEditState } from "@/lib/geo/line-path";
@@ -56,32 +60,24 @@ export function TrimmerMap({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<Map | null>(null);
   const [mapReady, setMapReady] = useState<Map | null>(null);
-  const polygonSourceRef = useRef<VectorSource | null>(null);
-  const [polygonSource, setPolygonSource] = useState<VectorSource | null>(null);
-  const originalLinesSourceRef = useRef<VectorSource | null>(null);
-  const trimmedLinesSourceRef = useRef<VectorSource | null>(null);
+  const polygonSource = useMemo(() => new VectorSource(), []);
+  const originalLinesSource = useMemo(() => new VectorSource(), []);
+  const trimmedLinesSource = useMemo(() => new VectorSource(), []);
   const trimmedLinesLayerRef = useRef<VectorLayer | null>(null);
   const isDraggingHandleRef = useRef(false);
   const selectedLineIndexRef = useRef(selectedLineIndex);
-  selectedLineIndexRef.current = selectedLineIndex;
-
   const onSelectLineRef = useRef(onSelectLine);
-  onSelectLineRef.current = onSelectLine;
-
   const onLineEditRef = useRef(onLineEdit);
-  onLineEditRef.current = onLineEdit;
+
+  useEffect(() => {
+    selectedLineIndexRef.current = selectedLineIndex;
+    onSelectLineRef.current = onSelectLine;
+    onLineEditRef.current = onLineEdit;
+  });
 
   // --- Initialize map once ---
   useEffect(() => {
     if (!mapRef.current) return;
-
-    const polygonSource = new VectorSource();
-    const originalLinesSource = new VectorSource();
-    const trimmedLinesSource = new VectorSource();
-    polygonSourceRef.current = polygonSource;
-    setPolygonSource(polygonSource);
-    originalLinesSourceRef.current = originalLinesSource;
-    trimmedLinesSourceRef.current = trimmedLinesSource;
 
     const polygonLayer = new VectorLayer({
       source: polygonSource,
@@ -164,9 +160,12 @@ export function TrimmerMap({
     map.on("pointermove", pointerMoveHandler);
 
     mapInstance.current = map;
-    setMapReady(map);
+    const frameId = requestAnimationFrame(() => {
+      setMapReady(map);
+    });
 
     return () => {
+      cancelAnimationFrame(frameId);
       map.un("click", clickHandler);
       map.un("pointermove", pointerMoveHandler);
       map.setTarget(undefined);
@@ -174,7 +173,7 @@ export function TrimmerMap({
       setMapReady(null);
       trimmedLinesLayerRef.current = null;
     };
-  }, []);
+  }, [polygonSource, originalLinesSource, trimmedLinesSource]);
 
   // Refresh trimmed line styles when selection changes
   useEffect(() => {
@@ -183,9 +182,7 @@ export function TrimmerMap({
 
   // --- Update polygon ---
   const updatePolygon = useCallback(() => {
-    const source = polygonSourceRef.current;
-    if (!source) return;
-    source.clear();
+    polygonSource.clear();
 
     if (!polyGeoJson) return;
 
@@ -198,8 +195,8 @@ export function TrimmerMap({
       fromLonLat([c[0], c[1]]),
     );
 
-    source.addFeature(new Feature(new OlPolygon([coords])));
-  }, [polyGeoJson]);
+    polygonSource.addFeature(new Feature(new OlPolygon([coords])));
+  }, [polyGeoJson, polygonSource]);
 
   useEffect(() => {
     updatePolygon();
@@ -207,27 +204,22 @@ export function TrimmerMap({
 
   // --- Update original lines ---
   useEffect(() => {
-    const source = originalLinesSourceRef.current;
-    if (!source) return;
-    source.clear();
+    originalLinesSource.clear();
 
     originalLines.forEach((line) => {
       const coords = line.geometry.coordinates.map((c) =>
         fromLonLat([c[0], c[1]]),
       );
-      source.addFeature(new Feature(new OlLineString(coords)));
+      originalLinesSource.addFeature(new Feature(new OlLineString(coords)));
     });
-  }, [originalLines]);
+  }, [originalLines, originalLinesSource]);
 
   // --- Update trimmed lines (in-place when possible to avoid flicker) ---
   useEffect(() => {
-    const source = trimmedLinesSourceRef.current;
-    if (!source) return;
-
-    const existing = source.getFeatures();
+    const existing = trimmedLinesSource.getFeatures();
 
     if (existing.length !== trimmedLines.length) {
-      source.clear();
+      trimmedLinesSource.clear();
       trimmedLines.forEach((line, i) => {
         const coords = line.geometry.coordinates.map((c) =>
           fromLonLat([c[0], c[1]]),
@@ -235,7 +227,7 @@ export function TrimmerMap({
         if (coords.length < 2) return;
         const feature = new Feature(new OlLineString(coords));
         feature.set("lineIndex", i);
-        source.addFeature(feature);
+        trimmedLinesSource.addFeature(feature);
       });
       return;
     }
@@ -250,7 +242,7 @@ export function TrimmerMap({
       geometry.setCoordinates(coords);
       feature.set("lineIndex", i);
     });
-  }, [trimmedLines]);
+  }, [trimmedLines, trimmedLinesSource]);
 
   // --- Fit to all features (only when inputs change, not on every edit) ---
   const fitKeyRef = useRef<string>("");
@@ -266,9 +258,9 @@ export function TrimmerMap({
     let hasFeatures = false;
 
     for (const source of [
-      polygonSourceRef.current,
-      originalLinesSourceRef.current,
-      trimmedLinesSourceRef.current,
+      polygonSource,
+      originalLinesSource,
+      trimmedLinesSource,
     ]) {
       if (source && source.getFeatures().length > 0) {
         const e = source.getExtent();
@@ -286,7 +278,14 @@ export function TrimmerMap({
         duration: 500,
       });
     }
-  }, [polyGeoJson, originalLines.length, lineEdits.length]);
+  }, [
+    polyGeoJson,
+    originalLines.length,
+    lineEdits.length,
+    polygonSource,
+    originalLinesSource,
+    trimmedLinesSource,
+  ]);
 
   const selectedEdit =
     selectedLineIndex !== null ? lineEdits[selectedLineIndex] : null;
@@ -306,31 +305,37 @@ export function TrimmerMap({
     isDraggingHandleRef.current = dragging;
   }, []);
 
+  const handleMapResize = useCallback(() => {
+    mapInstance.current?.updateSize();
+  }, []);
+
   return (
-    <div className="relative">
-      <div
-        ref={mapRef}
-        className="ol-map w-full h-[500px] rounded-md border overflow-hidden"
-      />
-      <div className="absolute bottom-3 left-3 z-10">
-        <PolygonArea source={polygonSource} />
+    <MapResizeContainer onResize={handleMapResize} {...MAP_RESIZE_DEFAULTS}>
+      <div className="relative h-full">
+        <div
+          ref={mapRef}
+          className="ol-map w-full h-full rounded-md border overflow-hidden"
+        />
+        <div className="absolute bottom-3 left-3 z-10">
+          <PolygonArea source={polygonSource} />
+        </div>
+        <div className="absolute bottom-3 right-3 z-10">
+          <MeasureTool map={mapReady} />
+        </div>
+        {mapReady &&
+          selectedEdit &&
+          selectedOriginal &&
+          selectedLineIndex !== null && (
+            <LineEditHandles
+              map={mapReady}
+              originalLine={selectedOriginal}
+              editState={selectedEdit}
+              lineIndex={selectedLineIndex}
+              onEdit={handleLineEdit}
+              onDraggingChange={handleDraggingChange}
+            />
+          )}
       </div>
-      <div className="absolute bottom-3 right-3 z-10">
-        <MeasureTool map={mapReady} />
-      </div>
-      {mapReady &&
-        selectedEdit &&
-        selectedOriginal &&
-        selectedLineIndex !== null && (
-          <LineEditHandles
-            map={mapReady}
-            originalLine={selectedOriginal}
-            editState={selectedEdit}
-            lineIndex={selectedLineIndex}
-            onEdit={handleLineEdit}
-            onDraggingChange={handleDraggingChange}
-          />
-        )}
-    </div>
+    </MapResizeContainer>
   );
 }
